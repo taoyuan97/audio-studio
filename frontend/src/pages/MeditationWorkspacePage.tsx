@@ -91,7 +91,7 @@ export default function MeditationWorkspacePage() {
       duration?: number
       model?: string
     } | null
-    if (params?.duration && [5, 15, 30].includes(params.duration)) {
+    if (params?.duration && [5, 10, 15, 20, 25, 30].includes(params.duration)) {
       setDuration(params.duration as ScriptDuration)
     }
     if (params?.model) setModel(params.model)

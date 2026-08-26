@@ -1,8 +1,8 @@
-"""LLM ModelRegistry：DeepSeek + 通义千问（DashScope OpenAI 兼容），流式输出。
+"""LLM ModelRegistry：DeepSeek + Kimi + 通义千问，流式输出。
 
-- 两家均为 OpenAI 兼容 chat/completions + SSE 流式，直接用 httpx 实现
+- 三家均为 OpenAI 兼容 chat/completions + SSE 流式，直接用 httpx 实现
   （不引入 LangChain 重依赖；registry 接口保持可替换）。
-- 配置：DEEPSEEK_API_KEY / DASHSCOPE_API_KEY（见 config.py）。
+- 配置：各服务商的 API_KEY + MODEL_ID（见 config.py）。
 - 错误映射（api-contract.md 第 12 节）：
   - Key 未配置 → SCRIPT_LLM_NOT_CONFIGURED（422，调用方提交前应先校验）；
   - 网络/上游 4xx-5xx → SCRIPT_LLM_ERROR（502，message 脱敏）；
@@ -31,37 +31,35 @@ class LlmModel:
     api_key_setting: str  # Settings 字段名
 
 
-MODELS: tuple[LlmModel, ...] = (
-    LlmModel(
-        provider="deepseek",
-        model="deepseek-chat",
-        name="DeepSeek Chat",
-        base_url="https://api.deepseek.com/v1",
-        api_key_setting="deepseek_api_key",
-    ),
-    LlmModel(
-        provider="moonshot",
-        model="kimi-k2-0905-preview",
-        name="Kimi K2",
-        base_url="https://api.moonshot.cn/v1",
-        api_key_setting="moonshot_api_key",
-    ),
-    LlmModel(
-        provider="qwen",
-        model="qwen-plus",
-        name="通义千问 Plus",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        api_key_setting="dashscope_api_key",
-    ),
-)
-
-
 class ModelRegistry:
     """模型注册表：可用性声明 + OpenAI 兼容流式调用。"""
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._models = {m.model: m for m in MODELS}
+        self._entries = (
+            LlmModel(
+                provider="deepseek",
+                model=settings.deepseek_model_id,
+                name="DeepSeek Chat",
+                base_url="https://api.deepseek.com/v1",
+                api_key_setting="deepseek_api_key",
+            ),
+            LlmModel(
+                provider="moonshot",
+                model=settings.moonshot_model_id,
+                name="Kimi K2",
+                base_url="https://api.moonshot.cn/v1",
+                api_key_setting="moonshot_api_key",
+            ),
+            LlmModel(
+                provider="qwen",
+                model=settings.dashscope_model_id,
+                name="通义千问 Plus",
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+                api_key_setting="dashscope_api_key",
+            ),
+        )
+        self._models = {entry.model: entry for entry in self._entries}
 
     def get(self, model: str) -> LlmModel | None:
         return self._models.get(model)
@@ -77,7 +75,7 @@ class ModelRegistry:
         - FAKE_MODE：全量注册模型（伪流式无需 Key）。
         """
         items: list[dict[str, Any]] = []
-        for entry in MODELS:
+        for entry in self._entries:
             if self.settings.fake_mode or self.is_configured(entry.model):
                 items.append(
                     {

@@ -2,11 +2,32 @@
 
 ## 1. 文档信息
 
-- 版本：v1.1（4.8 models 响应改为仅含可用模型，新增 Kimi 注册项）
+- 版本：v1.3
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v1.3 增加章节实施状态矩阵，校准 health 版本示例；纳入脚本草稿/版本、六档时长与可配置模型 ID 契约
+- 变更记录：v1.1 将 4.8 models 响应改为仅含可用模型并新增 Kimi 注册项
 - 关联文档：`docs/tech/tech-design.md`（总体设计）、`docs/tech/data-model.md`（数据模型）
 - 对接基准：`backend/tests/test_frontend_contract.py` 按本文档逐端点锁定；前端 `frontend/src/api/types.ts` 以本文档为类型单一事实源
+
+### 1.1 章节实施状态
+
+本文同时承载“已实现契约”和“后续任务已确认设计”。**已确认设计不表示端点已经存在**；开发和联调前应先核对下表及对应任务状态。
+
+| 章节 | 能力 | 实施状态 | 归属 |
+|---|---|---|---|
+| 第 3 节 | health / stats | 已实现 | T002 |
+| 第 4 节 | 冥想会话、消息、模型、草稿与版本保存 | 已实现 | T003 |
+| 第 5 节 | run 查询、SSE、取消 | 已实现 | T002 |
+| 第 6 节 | artifacts 基座、音频/peaks、脚本版本查看与恢复 | 已实现（T002 基座 + T003 扩展） | T002/T003 |
+| 第 7 节 | TTS | 仅确认设计，端点尚未实现 | T004 |
+| 第 8 节 | BGM | 仅确认设计，端点尚未实现 | T005 |
+| 第 9 节 | 混音 | 仅确认设计，端点尚未实现 | T006 |
+| 第 10 节 | 设置状态与探测 | 仅确认设计，端点尚未实现 | T007 |
+| 第 11 节 | 通用 run 与剧本事件已实现；TTS/BGM/混音事件待实现 | 部分实现 | T002–T006 |
+| 第 12 节 | 错误码目标全集；随对应业务任务逐步实现 | 部分实现 | T002–T007 |
+
+`POST /api/demo/jobs` 与 `kind=demo` 是 T002 队列/SSE 内部联调入口，不属于正式业务契约，后续业务不得依赖。
 
 ## 2. 通用约定
 
@@ -50,7 +71,7 @@
 
 健康检查。
 
-- 响应 200：`{ "status": "ok", "version": "1.0.0" }`
+- 响应 200：`{ "status": "ok", "version": "0.1.0" }`
 
 ### 3.2 GET /api/stats
 
@@ -152,7 +173,7 @@
 { "text": "生成一段深海放松冥想", "duration": 15, "model": "deepseek-chat", "allow_draft_overwrite": false }
 ```
 
-- 校验：`text` 非空 ≤20000 字符；`duration` ∈ {5,15,30}；`model` 必须在可用模型列表。
+- 校验：`text` 非空 ≤20000 字符；`duration` ∈ {5,10,15,20,25,30}；`model` 必须在可用模型列表。
 - 响应 202：run 载荷（`kind: "script"`）。
 - 409：`CONVERSATION_RUN_ACTIVE`；manual/restored 未保存草稿且未确认覆盖时为 `SCRIPT_DRAFT_OVERWRITE_CONFIRM_REQUIRED`。
 - 422：`SCRIPT_TEXT_INVALID` / `SCRIPT_PARAMS_INVALID`。
@@ -180,8 +201,9 @@
 }
 ```
 
-- 字段：`provider`（deepseek/qwen/moonshot）/ `model`（发送消息时的 `model` 取值）/ `name`（展示名）。
-- 注册模型与 Key 对应：`deepseek-chat`←`DEEPSEEK_API_KEY`、`qwen-plus`←`DASHSCOPE_API_KEY`、`kimi-k2-0905-preview`←`MOONSHOT_API_KEY`。
+- 字段：`provider`（deepseek/qwen/moonshot）/ `model`（对应 `*_MODEL_ID` 的实际值，也是发送消息时的 `model` 取值）/ `name`（兼容保留的服务展示名；工作台下拉只显示 `model`）。
+- 注册模型与配置对应：`DEEPSEEK_MODEL_ID`←`DEEPSEEK_API_KEY`、`DASHSCOPE_MODEL_ID`←`DASHSCOPE_API_KEY`、`MOONSHOT_MODEL_ID`←`MOONSHOT_API_KEY`；缺省模型 ID 分别为 `deepseek-chat`、`qwen-plus`、`kimi-k2-0905-preview`。
+- 三项模型 ID 必须非空且互不重复；配置错误时后端启动失败并指出字段。修改 `.env` 后须重启后端。
 - 兜底：页面加载后 Key 配置发生变化时，发送接口仍返回 422 `SCRIPT_LLM_NOT_CONFIGURED`。
 
 ### 4.9 PATCH /api/conversations/{id}/script-draft
@@ -483,13 +505,14 @@ SSE 事件流（协议见第 11 节）。
 ```json
 {
   "providers": {
-    "llm_deepseek": { "configured": true, "key_masked": "sk-***cdef" },
-    "llm_qwen": { "configured": true, "key_masked": "sk-***ab12" },
+    "llm_deepseek": { "configured": true, "key_masked": "sk-***cdef", "model_id": "deepseek-chat" },
+    "llm_qwen": { "configured": true, "key_masked": "sk-***ab12", "model_id": "qwen-plus" },
+    "llm_moonshot": { "configured": false, "key_masked": null, "model_id": "kimi-k2-0905-preview" },
     "tts_aliyun": { "configured": true, "key_masked": "sk-***9x8y" },
     "tts_volc": { "configured": false, "key_masked": null },
     "minimax": { "configured": true, "key_masked": "eyJ***jk4" }
   },
-  "ffmpeg": { "available": true, "version": "ffmpeg version 7.0 ..." },
+  "ffmpeg": { "available": true, "version": "ffmpeg version 7.0 ...", "ffprobe_available": true },
   "fake_mode": false
 }
 ```
@@ -498,7 +521,7 @@ SSE 事件流（协议见第 11 节）。
 
 连通性测试（真实轻量探测）。
 
-- `provider` ∈ `llm | aliyun_tts | volc_tts | minimax | ffmpeg`。
+- `provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | aliyun_tts | volc_tts | minimax | ffmpeg`。
 - 响应 200（探测本身 200，结果在体内）：
 
 ```json

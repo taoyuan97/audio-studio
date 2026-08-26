@@ -75,7 +75,7 @@ export interface StatsResponse {
 
 export type Scene = 'meditation' | 'podcast'
 
-export type ScriptDuration = 5 | 15 | 30
+export type ScriptDuration = 5 | 10 | 15 | 20 | 25 | 30
 
 export interface Conversation {
   id: string

@@ -51,7 +51,7 @@
 **通用组件骨架**
 
 - `StatusBanner/`（全局错误/提示，Zustand 全局 UI store 驱动）。
-- `DurationSelect/`（5/15/30 分钟气泡选择，Popover 交互对齐原型）、`ModelSelect/`。
+- `DurationSelect/`（5/10/15/20/25/30 分钟气泡选择）、`ModelSelect/`。
 - Zustand store 骨架（全局 UI 态：错误提示、全局运行态）。
 
 ### 4.2 不实现

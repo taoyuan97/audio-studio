@@ -19,6 +19,9 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "data_dir": tmp_path,
         "fake_mode": True,
         "serve_frontend": False,
+        "deepseek_model_id": "deepseek-chat",
+        "dashscope_model_id": "qwen-plus",
+        "moonshot_model_id": "kimi-k2-0905-preview",
     }
     values.update(overrides)
     return Settings(**values)

@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.2
-- 状态：设计已确认（决策点 A1–D4、E1–E8、F1–F7 闭环），待实施
+- 版本：v1.3
+- 状态：设计已确认、部分实施（T001/T002/T003 已完成；T004–T008 待实施）
 - 创建日期：2026-08-26
+- 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
 - 变更记录：v1.2 API 契约与数据模型拆分为独立文档（`api-contract.md` / `data-model.md`，实现级单一事实源），本文 5.2/5.4 改为摘要概览
 - 变更记录：v1.1 吸收 meditation-guide-studio（`C:\projects\apps\meditation-guide-studio`）已验证实现——TTS 双引擎接入代码移植、情绪 instruction 映射定论、SSML break/静音切分双策略、音频落盘原子化规范、run 进度持久化、MiniMax 同步接口修正（E1）与计费安全重试（E8）、48kHz 基准（E2）、呼吸停顿 4s/5s（E4）
 - 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T008`（任务拆分）
@@ -41,7 +42,7 @@
 │  TTS Provider Registry：阿里云 DashScope / 火山引擎豆包     │
 │  Music Provider：MiniMax Music（同步接口，长超时单次调用）    │
 │  FFmpeg / ffprobe：本地子进程                               │
-│  StaticFiles：生产模式托管 frontend/dist + /media 音频      │
+│  StaticFiles：生产模式托管 frontend/dist；音频走 API Range │
 └───────┬────────────────────────────────────────────────────┘
         │
 ┌───────▼──────────────────┐  ┌─────────────────────────────┐
@@ -77,7 +78,7 @@
 | 情绪标记（B3/E7） | 阿里云 `qwen-audio-3.0-tts-plus` 为默认模型，`[情绪:x]` → instruction 直传（已验证支持）；火山按 `TTSCapabilities` 能力声明降级为普通朗读；不引入 sambert 旧模型分支 |
 | BGM（B4/E1） | MiniMax Music **同步接口**（`music_generation`，单次调用返回 `audio_url`，长超时 10min）：调用 → SSE 等待心跳 → 即下即存；失败不自动重试，重试区分「重新下载/重新生成」（E8） |
 | 混音（B5） | 本地 FFmpeg（Windows 安装），Python 子进程封装；闪避仅模式 B（sidechaincompress），模式 A 删除 |
-| 音频预览（B6） | `<audio>` 流播放（HTTP Range）；波形 = 后端 ffmpeg 提取 PCM → 峰值 JSON（缓存） |
+| 音频预览（B6） | `<audio>` 经 artifact API 流播放（HTTP Range）；16bit WAV 原生解析，其他格式经 ffmpeg 提取 PCM → 峰值 JSON（缓存） |
 | 音色库（D4） | 官方音色列表硬编码后端配置，支持试听（按引擎+音色缓存） |
 | 纯音乐（D2） | 并入 BGM 模块；混音页支持仅背景轨导出 |
 | 闪避（D1） | 仅模式 B「人声时压低」，带开关；单轨组合自动失效 |
@@ -92,6 +93,8 @@
 | 工程规范（借鉴） | 音频落盘 `.part` 临时文件 + `os.replace` 原子替换 + 每步 ffprobe 复验 + 采样率/声道一致性校验；run 进度持久化（SSE 重连可恢复）；明确不借鉴 Dify/Key 入库/并发 worker/前端轮询 |
 
 ## 4. 仓库与目录结构
+
+以下为一期目标结构，不代表所有文件均已存在；当前 T001/T002/T003 已实现，`tts.py`、`music.py`、`mixdown.py`、`settings.py` 及对应前端业务模块随 T004–T007 落地。
 
 ```text
 audio-studio/
@@ -144,7 +147,7 @@ audio-studio/
    ├─ app/
    │  ├─ main.py              # 应用工厂 + 路由 + 静态托管 + SPA fallback
    │  ├─ config.py            # 环境变量 / DATA_DIR / FAKE_MODE
-   │  ├─ database.py          # sqlite3 + 线程池执行（同 article-studio 模式）
+   │  ├─ database.py          # sqlite3 同步短连接 + WAL + 幂等迁移
    │  ├─ runs.py              # 全局串行队列 + run 生命周期 + SSE 事件总线
    │  ├─ conversations.py     # 会话/消息路由 + LLM 流式服务
    │  ├─ artifacts.py         # 产物 CRUD + 音频/峰值路由
@@ -152,8 +155,8 @@ audio-studio/
    │  ├─ music.py             # BGM 路由/服务（MiniMax 同步调用 + 后处理）
    │  ├─ mixdown.py           # 混音路由/服务
    │  ├─ settings.py          # 配置状态/探测路由
-   │  ├─ peaks.py             # ffmpeg PCM → 峰值 JSON（缓存）
-   │  └─ ffmpeg.py            # ffmpeg/ffprobe 子进程封装 + 启动探测
+   │  ├─ peaks.py             # WAV 原生/FFmpeg PCM → 峰值 JSON（缓存）
+   │  └─ ffmpeg.py            # ffmpeg/ffprobe 底层路径探测与子进程封装
    └─ tests/                  # pytest（契约测试 + 假模式全链路）
 ```
 
@@ -165,6 +168,7 @@ audio-studio/
 
 - `runs` 表：`id, kind(script|tts|music|mixdown), conversation_id?, status(queued|running|completed|failed|cancelled), progress_json(completed, total, stage —— 进度持久化，SSE 断线重连/刷新后可恢复), result_json(音乐线：远端 audio_url/expires_at，供「重新下载」免计费重试), error_code, error_message, artifact_id, created_at, started_at, finished_at`。
 - 提交接口（各线 POST）创建 `queued` run 入 FIFO 队列 → 202 + run 载荷；队列长度 ≥ 8 → 409 `RUN_QUEUE_FULL`。
+- 业务线通过 `RunManager.register(kind, handler)` 注册；提交使用 `enqueue(kind, conversation_id?)`，handler 通过 `RunContext.emit/report_progress/check_cancelled` 接入事件、持久化进度和协作取消。
 - 单 worker 协程顺序执行：出队 → `running` → 执行线逻辑 → 终态（成功落 `artifact_id`）。
 - 取消：queued → 直接 cancelled；running → 按线中断（LLM abort / TTS 停止下一段 / Music 中断等待 / FFmpeg kill），丢弃中间产物。
 - SSE `GET /api/runs/{run_id}/events`：连接即发 `run.status`（当前状态 + 队列位置 + 已持久化的进度 `{completed, total, stage}`），随后按事件推送；`run.completed/failed/cancelled` 后关闭。
@@ -194,7 +198,8 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
   - 通义千问（`qwen-plus`，DashScope OpenAI 兼容模式）
   - Kimi（`kimi-k2-0905-preview`，`api.moonshot.cn/v1`）
   - 模型列表**仅返回已配置 Key 的可用项**（`FAKE_MODE` 返回全量），前端下拉只展示可用模型；发送时后端仍校验 `SCRIPT_LLM_NOT_CONFIGURED` 作兜底；`FAKE_MODE` 时返回内置示例脚本的伪流。
-- **`app/script/prompts.py`**：冥想专用 Prompt 模板——角色设定 + 标记规范（`[停顿 Ns]`/`[情绪:x]`/`[语速:x]`/`[吸气]`/`[呼气]`）+ 结构要求（引导进入→主体→收尾）+ 时长-篇幅映射（5min≈1200 字 / 15min≈3200 字 / 30min≈6000 字，含停顿折算）。
+  - 三家实际模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 配置，必须非空且互不重复；工作台下拉只显示实际模型 ID。修改 `.env` 后重启生效，历史版本中的旧 ID 不迁移。
+- **`app/script/prompts.py`**：冥想专用 Prompt 模板——角色设定 + 标记规范（`[停顿 Ns]`/`[情绪:x]`/`[语速:x]`/`[吸气]`/`[呼气]`）+ 结构要求（引导进入→主体→收尾）+ 时长-篇幅映射（5/10/15/20/25/30min≈1200/2200/3200/4200/5100/6000 字，含停顿折算）。
 - **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`{kind: speech|pause, text?, emotion?, speed?, seconds?}`）+ 预估时长（语速档 × 字数 + 停顿求和）。生成完成与 PATCH 编辑时均执行，随产物存储，前端直接渲染徽章与时间轴，**不在 TS 重复实现解析**。
 - **会话流**：POST messages → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 messages + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
 - 多轮 refinement：历史消息全部入上下文（预算内截断），用户可自然语言微调。
@@ -229,7 +234,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 
 ### 5.8 混音线设计（`app/ffmpeg.py` + `app/mixdown.py`）
 
-- **启动探测**：`ffmpeg -version` / `ffprobe -version`（`FFMPEG_PATH` 可覆盖），失败 → `MIX_FFMPEG_MISSING`，设置页透出。
+- **职责边界**：T002 只提供 `find_ffmpeg/find_ffprobe/ffmpeg_version/run_ffmpeg` 底层工具；T006 在混音提交前按 `FFMPEG_PATH` 检查并映射脱敏后的 `MIX_FFMPEG_MISSING/MIX_FFMPEG_ERROR`；T007 负责启动/设置状态中的 ffmpeg、ffprobe 可用性与版本探测。
 - **滤镜链**（人声+背景，均有偏移/音量）：
   ```text
   [bgm] aloop/循环填充或 atrim 截断 → adelay=offset → volume=bgm_gain
@@ -240,11 +245,11 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
   参数默认值：threshold≈0.03、ratio≈4、attack≈50ms、release≈400ms（实施期微调）。
 - **组合规则**：仅人声 → 透传重编码；仅背景 → 原样导出；单轨或 ducking=off → 跳过 sidechain；背景短于人声 `aloop` 循环填充，长则 `atrim` 截断（前端规则提示由产物参数推导展示）。
 - **导出**：MP3（libmp3lame 320k）/ WAV（pcm_s16le 48kHz，E2）；中间与最终文件均按 5.6 落盘工程规范原子落盘 + ffprobe 复验。
-- **波形峰值（B6）**：`peaks.py` —— `ffmpeg -i file -f s16le -ac 1 -ar 8000 pipe:` 取单声道 PCM → 分桶取最大幅度（≤1200 桶）→ JSON 缓存于 `peaks/{id}.json`；`GET /api/artifacts/{id}/peaks` 命中缓存直接返回。双轨预览 = 前端分别取两轨 peaks 叠放绘制。
+- **波形峰值（B6）**：`peaks.py` —— 16bit WAV 用 Python `wave` 原生读取；MP3/其他格式用 ffmpeg 解码为 8kHz 单声道 PCM；随后分桶取最大幅度（≤1200 桶）并原子缓存于 `peaks/{id}.json`。`GET /api/artifacts/{id}/peaks` 命中缓存直接返回。双轨预览 = 前端分别取两轨 peaks 叠放绘制。`FFMPEG_PATH` 透传缺口见 ISSUE-003。
 
 ### 5.9 设置线设计
 
-- `GET /api/settings/status`：各 provider 是否已配置（Key 存在性 + 掩码预览，如 `sk-***abc`）、ffmpeg 版本、FAKE_MODE 状态。
+- `GET /api/settings/status`：各 provider 是否已配置（Key 存在性 + 掩码预览，如 `sk-***abc`；LLM 同时返回只读实际 model_id）、ffmpeg/ffprobe 版本与可用性、FAKE_MODE 状态。
 - `POST /api/settings/probe/{provider}`：轻量真实探测——llm（列模型/一次补全）、aliyun_tts / volc_tts（合成一句短音频即弃）、minimax（余额或提交探测）、ffmpeg（版本）。返回 `{ok, latency_ms, message}`。
 - Key 只读：编辑须改 `.env` 并重启，设置页文案说明。
 
@@ -255,6 +260,9 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 DEEPSEEK_API_KEY=
 DASHSCOPE_API_KEY=          # 千问 LLM 与阿里云 TTS 共用
 MOONSHOT_API_KEY=           # Kimi（api.moonshot.cn）
+DEEPSEEK_MODEL_ID=deepseek-chat
+DASHSCOPE_MODEL_ID=qwen-plus
+MOONSHOT_MODEL_ID=kimi-k2-0905-preview
 
 # 火山引擎 TTS
 VOLC_TTS_APP_ID=
@@ -286,7 +294,7 @@ LLM_TIMEOUT_SECONDS=120
 
 ### 6.1 工程脚手架
 
-同 article-studio：Vite + React 19 + TS（strict）+ ESLint/Prettier + pnpm；`vite.config.ts` 代理 `/api` 与 `/media` → `127.0.0.1:8000`。
+同 article-studio：Vite + React 19 + TS（strict）+ ESLint/Prettier + pnpm；业务请求统一通过 `vite.config.ts` 的 `/api` 代理到 `127.0.0.1:8000`。当前配置仍保留未使用的 `/media` 代理，但后端不提供该路由，业务代码不得依赖。
 
 ### 6.2 路由设计
 
@@ -347,7 +355,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 # 前端（终端 2）
 cd frontend
 pnpm install
-pnpm dev            # http://localhost:5173，/api 与 /media 经 proxy 转发到 8000
+pnpm dev            # http://localhost:5173，业务请求经 /api proxy 转发到 8000
 
 # 测试
 cd backend && uv run pytest -p no:cacheprovider
@@ -377,8 +385,8 @@ cd frontend && pnpm build        # 产物 → frontend/dist
 cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-- `SERVE_FRONTEND=true`：FastAPI 挂载 `dist` + SPA fallback（非 `/api`、`/media` 未命中返回 `index.html`）。
-- `/media` 挂载 `DATA_DIR/audio`（StaticFiles，验证 Range 支持；不足则改 `api/artifacts/{id}/audio` 自定义 Range 端点为唯一音频出口）。
+- `SERVE_FRONTEND=true`：FastAPI 挂载 `dist` + SPA fallback（非 `/api` 深链未命中返回 `index.html`）。
+- 音频不暴露 `/media` 静态目录；`GET /api/artifacts/{id}/audio` 自定义 Range 端点是唯一音频出口。
 - 单进程服务 API、SSE、音频与前端；数据落本机 `DATA_DIR`。不做 Docker/云部署。
 
 ## 10. 风险与对策
@@ -392,7 +400,7 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | SSE 经 Vite proxy 流式兼容 | dev proxy 与直连各验证一次（同 article-studio） |
 | 长任务排队体验（单队列串行） | `run.status` 携带队列位置；前端全局运行态提示（首页/侧边栏可见进行中任务） |
 | 手工 TS 契约类型漂移 | 契约测试 + `types.ts` 锚定；后续可评估 openapi-typescript |
-| Windows 下 ffmpeg 未安装 | 启动探测 + 设置页透出 `MIX_FFMPEG_MISSING` + 安装指引文案 |
+| Windows 下 ffmpeg 未安装 | T006 提交前检查并返回 `MIX_FFMPEG_MISSING`；T007 启动/设置状态探测与安装指引。peaks 配置透传缺口见 ISSUE-003 |
 
 ## 11. 任务拆分（概览，明细见 docs/task/）
 
@@ -409,3 +417,5 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | 二期 T101+ | 播客剧本线（scene=podcast，意图识别/润色模式），复用 T004/T006 | 一期完成 |
 
 建议顺序：T001/T002 并行 → T003 → T004 → T005 → T006 → T007 → T008。B3 情绪支持度已由 meditation-guide-studio 验证，`smoke_tts.py` 仅作 T004 完工后的连通复核，不再阻塞开工。
+
+当前实施状态：T001、T002、T003 已完成；T004、T005、T006、T007、T008 待开始。任务状态以各 `docs/task/T*.md` 为准。

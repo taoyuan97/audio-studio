@@ -22,7 +22,7 @@ beforeAll(() => {
 afterEach(cleanup)
 
 describe('ModelSelect 只展示可用模型', () => {
-  it('列表只含接口返回的可用模型，选中项渲染展示名', () => {
+  it('选中项只显示实际模型 ID，不显示供应商展示名', () => {
     render(
       <ModelSelect
         models={[
@@ -32,7 +32,8 @@ describe('ModelSelect 只展示可用模型', () => {
         value="kimi-k2-0905-preview"
       />,
     )
-    expect(screen.getByText('Kimi K2')).toBeInTheDocument()
+    expect(screen.getByText('kimi-k2-0905-preview')).toBeInTheDocument()
+    expect(screen.queryByText('Kimi K2')).not.toBeInTheDocument()
   })
 
   it('空列表显示「无可用模型」占位', () => {

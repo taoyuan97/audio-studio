@@ -2,15 +2,16 @@
 
 ## 1. 文档信息
 
-- 版本：v1.0
+- 版本：v1.1
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v1.1 增加 T003 的 `script_drafts`、`artifact_versions` 与 artifact 当前版本字段，并按实际实现将数据库访问方式校准为 sqlite3 同步短连接
 - 关联文档：`docs/tech/tech-design.md`（总体设计）、`docs/tech/api-contract.md`（API 契约）
 - 单一事实源：后端 `app/database.py`（DDL）、契约测试；前端 `types.ts` 按本文档映射
 
 ## 2. 总览
 
-- 数据库：SQLite 单库（WAL 模式），路径 `DATA_DIR/audio.sqlite3`；sqlite3 + 线程池执行（同 article-studio，不用 ORM）。
+- 数据库：SQLite 单库（WAL 模式），路径 `DATA_DIR/audio.sqlite3`；sqlite3 同步短连接（每次操作短连接、写事务 `BEGIN IMMEDIATE`、`busy_timeout=5000`，不用 ORM）。
 - 主键：`TEXT`，格式 `{前缀}_{unix毫秒}_{6位随机}`（如 `conv_1724660000_a1b2c3`），服务端生成。
 - 时间戳：Unix 毫秒整数。
 - JSON 字段：SQLite `TEXT` 存 JSON 字符串，读写经 json 序列化/反序列化。
@@ -164,7 +165,7 @@ CREATE TABLE artifact_versions (
 {
   "topic": "深海放松",           // 用户主题输入
   "matched_topic": "深海放松",   // 命中的预设主题（自由输入时同 topic）
-  "duration": 15,               // 目标时长档位 5|15|30（分钟）
+  "duration": 15,               // 目标时长档位 5|10|15|20|25|30（分钟）
   "model": "deepseek-chat"      // 最后一次生成的模型
 }
 ```

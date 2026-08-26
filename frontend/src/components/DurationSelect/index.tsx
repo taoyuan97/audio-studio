@@ -1,9 +1,10 @@
 import { Popover } from 'antd'
 import { useState } from 'react'
+import type { ScriptDuration } from '../../api/types'
 
-export type DurationValue = 5 | 15 | 30
+export type DurationValue = ScriptDuration
 
-const DURATIONS: DurationValue[] = [5, 15, 30]
+const DURATIONS: DurationValue[] = [5, 10, 15, 20, 25, 30]
 
 interface DurationSelectProps {
   value?: DurationValue
@@ -11,7 +12,7 @@ interface DurationSelectProps {
   disabled?: boolean
 }
 
-/** 时长档位气泡选择（5/15/30 分钟，Popover 交互对齐原型） */
+/** 时长档位气泡选择（5/10/15/20/25/30 分钟） */
 export default function DurationSelect({ value = 15, onChange, disabled }: DurationSelectProps) {
   const [open, setOpen] = useState(false)
 

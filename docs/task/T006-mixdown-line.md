@@ -24,11 +24,13 @@
 
 ## 4. 范围
 
-### 4.2 必须实现
+### 4.1 必须实现
 
 **后端**
 
 - `app/mixdown.py`：jobs 端点（api-contract.md 第 9 节：参数校验、轨道类型校验 `MIX_INPUT_INVALID`、`MIX_FFMPEG_MISSING`）。
+- 复用 T002 `app/ffmpeg.py` 底层工具，混音提交前按 `FFMPEG_PATH`（缺省 PATH）同时检查 ffmpeg/ffprobe；不可用时直接 503 `MIX_FFMPEG_MISSING`，不创建 run。
+- 将底层 `FFmpegError` 映射为脱敏后的 `MIX_FFMPEG_ERROR`；上游 stderr 与本地绝对路径只写服务端日志，不进入 API/SSE `message`。
 - 滤镜链构建（纯函数，可单测）：
   ```text
   双轨: [bgm] (aloop 循环 | atrim 截断) → adelay=offset → volume=bgm_gain
@@ -39,7 +41,7 @@
   ```
   sidechain 参数默认：threshold≈0.03、ratio≈4、attack≈50ms、release≈400ms。
 - run handler：`mix.progress`（prep→ducking→encode）→ 原子落盘 → 建 mix 产物 → completed。
-- ffmpeg 缺失时端点直接 503 `MIX_FFMPEG_MISSING`（不排队）。
+- FFmpeg 子进程取消、超时与失败时清理 `.part`/中间文件；已开始执行的 running run 支持终止子进程并以 cancelled 收口。
 
 **前端**
 
@@ -66,7 +68,7 @@ Mutation: submitJob / cancel
 
 ## 6. 测试
 
-- 自动化（pytest）：滤镜链参数拼装矩阵（双轨+ducking 开/关、偏移边界、循环/截断分支、单轨透传/原样）、组合规则处理结果时长断言（fake 双 WAV：短背景→输出=人声时长；长背景→输出=人声时长）、原子落盘与失败清理、契约端点与事件序列、ffmpeg 缺失 503。
+- 自动化（pytest）：滤镜链参数拼装矩阵（双轨+ducking 开/关、偏移边界、循环/截断分支、单轨透传/原样）、组合规则处理结果时长断言（fake 双 WAV：短背景→输出=人声时长；长背景→输出=人声时长）、原子落盘与失败清理、契约端点与事件序列、`FFMPEG_PATH` 覆盖、ffmpeg/ffprobe 缺失 503、执行失败错误码与路径脱敏。
 - 自动化（Vitest）：轨道选择/清空互斥与提交禁用、规则提示随时长/选择变化、双轨波形叠放渲染。
 - 手工：固定样本（人声含明确停顿 + 背景音）人耳验收 ducking 三态（开/关/单轨），偏移与音量实时听感。
 
@@ -77,4 +79,5 @@ Mutation: submitJob / cancel
 - [ ] ducking 开启时人声段落背景音可感知降低、停顿处恢复（人耳验收）；关闭/单轨时无压缩。
 - [ ] 偏移/音量生效（滤镜链参数断言 + 试听）；波形偏移可视化正确。
 - [ ] MP3/WAV 导出参数正确（ffprobe 复验断言）；失败无半成品。
+- [ ] `FFMPEG_PATH` 与 PATH 两种探测方式均生效；缺失/执行失败分别稳定映射 `MIX_FFMPEG_MISSING`/`MIX_FFMPEG_ERROR`，响应不泄露绝对路径和 stderr。
 - [ ] 契约测试通过；控制台无错误。

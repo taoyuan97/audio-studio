@@ -5,7 +5,7 @@
 
 ## 1. LLM API Key 配置（真实模型模式）
 
-冥想剧本生成默认接入三家模型（DeepSeek / Kimi / 通义千问），均为 OpenAI 兼容接口，仅需配置 API Key，无需额外 SDK。
+冥想剧本生成默认接入三家模型（DeepSeek / Kimi / 通义千问），均为 OpenAI 兼容接口；API Key 与实际模型 ID 均通过 `backend/.env` 配置，无需额外 SDK。
 
 ### 1.1 Key 申请
 
@@ -19,6 +19,7 @@
 
 - `DASHSCOPE_API_KEY` 与后续任务的阿里云 TTS 共用同一个 Key（见 `.env.example` 注释）。
 - 三家 Key 均可只配其中一或多家；**前端模型下拉只展示已配置 Key 的模型**，未配置的不出现在下拉中。
+- 三家模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 设置，必须非空且互不重复；模型下拉只显示实际模型 ID。
 - 真实模式下零 Key 时模型下拉为空、发送禁用（提示配置 Key）；`FAKE_MODE=true` 时下拉展示全部三家（无需任何 Key）。
 
 ### 1.2 配置步骤
@@ -29,8 +30,13 @@
    ```dotenv
    DEEPSEEK_API_KEY=sk-xxxxxxxx
    DASHSCOPE_API_KEY=sk-xxxxxxxx
+   DEEPSEEK_MODEL_ID=deepseek-chat
+   DASHSCOPE_MODEL_ID=qwen-plus
+   MOONSHOT_MODEL_ID=kimi-k2-0905-preview
    FAKE_MODE=false
    ```
+
+   模型 ID 可改为对应供应商账号实际可用的其他模型。空值或三项重复会阻止后端启动，错误信息会指出相关环境变量。
 
 3. 重启后端（`Settings` 通过 `lru_cache` 缓存，改 `.env` 必须重启才生效）。
 4. 验证配置是否生效（任选其一）：
@@ -79,7 +85,7 @@ pnpm dev
    - 结果区出现 3 步生成动画；
    - 左侧出现 AI 气泡且文字逐段增长（伪流式）；
    - 完成后脚本区出现标记徽章（情绪/语速）、停顿块、时间轴条与「预估口播」时长。
-4. **时长档位**：分别用 5/15/30 分钟生成，确认脚本篇幅与预估时长随档位变化。
+4. **时长档位**：分别选择 5/10/15/20/25/30 分钟，确认六档均可生成，脚本篇幅与预估时长随档位变化。
 5. **多轮 refinement**：在已有脚本的会话中再发「再温柔一些」/「缩短到 5 分钟」→ 脚本内容相应变化（FAKE_MODE 下为另一份示例脚本）。
 6. **编辑闭环**：点「编辑脚本」→ 修改文本（可增删 `[停顿 3s]`、`[情绪:温柔]` 等标记）→ 「保存并重新解析」→ 徽章与时间轴立即按新文本刷新；刷新页面后仍保持。
 7. **取消**：生成中点「取消」→ 临时流式内容被丢弃，无残留气泡。
@@ -90,7 +96,7 @@ pnpm dev
 ### 2.3 判定标准
 
 - 全部清单项通过、浏览器控制台无红色报错 → T003 手工验收通过。
-- 数据落盘位置：`backend/data/app.db`（SQLite）与 `backend/data/files/`（脚本产物 JSON）；如需重置，停掉后端后删除这两个路径再重启。
+- 数据落盘位置：缺省为 `backend/data/audio.sqlite3`（SQLite）与 `backend/data/audio/`（音频产物、试听和 peaks 缓存）；脚本正文及版本存于 SQLite，不单独写 JSON 文件。如需重置开发数据，先停掉后端，再备份并删除 `backend/data/audio.sqlite3`、对应 `-wal/-shm` 文件及 `backend/data/audio/` 后重启；自定义 `DATA_DIR` 时以其实际目录为准。
 
 ## 3. 遗留人工事项
 

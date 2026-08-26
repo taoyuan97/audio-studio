@@ -42,9 +42,10 @@
 
 **设置页（`/settings`）**
 
-- `GET /api/settings/status`（后端 `app/settings.py`）：provider 配置卡（llm_deepseek/llm_qwen/tts_aliyun/tts_volc/minimax：configured 状态 + Key 掩码）+ ffmpeg（版本/可用性）+ FAKE_MODE 状态。
+- `GET /api/settings/status`（后端 `app/settings.py`）：provider 配置卡（llm_deepseek/llm_qwen/llm_moonshot/tts_aliyun/tts_volc/minimax：configured 状态 + Key 掩码；三家 LLM 额外返回只读实际 model_id）+ ffmpeg/ffprobe（按 `FFMPEG_PATH` 或 PATH 探测版本/可用性）+ FAKE_MODE 状态。
 - 每项「测试连通」（`POST /api/settings/probe/{provider}`）：loading + 结果（成功延迟/失败原因文案）。
 - Key 编辑指引文案（改 `.env` 后重启生效）。
+- 应用启动/设置状态探测负责暴露 FFmpeg 可用性，但不阻止无需 FFmpeg 的剧本功能启动；T006 混音提交端点仍须独立前置校验，避免启动后环境变化造成误判。
 
 ### 4.2 不实现
 
@@ -61,7 +62,7 @@ Mutation: rename / delete / clearAll / probe
 
 ## 6. 测试
 
-- 自动化（pytest）：settings status/probe 契约（掩码格式、未配置 ok:false、probe 各 provider 分支 mock）、清空/删除联动（文件删除断言）。
+- 自动化（pytest）：settings status/probe 契约（掩码格式、LLM 实际 model_id、未配置 ok:false、probe 各 provider 分支 mock、`FFMPEG_PATH` 与 PATH 探测）、清空/删除联动（文件删除断言）。
 - 自动化（Vitest）：Tab 过滤、卡片信息按类型正确渲染、送下游跳转参数、清空确认流程、设置卡状态与探测交互。
 - 手工：四类产物入库后产物库全操作走查；删除 voice 后混音页下拉同步消失；probe 真实点击（已配置项）。
 

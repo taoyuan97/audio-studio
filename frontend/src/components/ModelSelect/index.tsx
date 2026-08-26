@@ -21,8 +21,8 @@ export default function ModelSelect({ models, value, onChange, loading, disabled
       style={{ minWidth: 180 }}
       options={models.map((model) => ({
         value: model.model,
-        label: model.name,
-        title: model.name,
+        label: model.model,
+        title: model.model,
       }))}
     />
   )

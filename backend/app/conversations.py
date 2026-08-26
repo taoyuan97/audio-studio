@@ -34,7 +34,7 @@ from .script.prompts import (
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
-SCRIPT_DURATIONS = (5, 15, 30)
+SCRIPT_DURATIONS = (5, 10, 15, 20, 25, 30)
 MAX_TEXT_LENGTH = 20000
 # 多轮 refinement 上下文预算（预算内截断）
 CONTEXT_MESSAGE_LIMIT = 24

@@ -167,7 +167,7 @@ class TestMessages:
         assert too_long.json()["code"] == "SCRIPT_TEXT_INVALID"
 
         bad_duration = client.post(
-            base, json={"text": "主题", "duration": 10, "model": "deepseek-chat"}
+            base, json={"text": "主题", "duration": 12, "model": "deepseek-chat"}
         )
         assert bad_duration.status_code == 422
         assert bad_duration.json()["code"] == "SCRIPT_PARAMS_INVALID"
@@ -177,6 +177,19 @@ class TestMessages:
         )
         assert bad_model.status_code == 422
         assert bad_model.json()["code"] == "SCRIPT_PARAMS_INVALID"
+
+    def test_all_duration_presets_are_accepted(self, client: TestClient):
+        for duration in (5, 10, 15, 20, 25, 30):
+            conversation = create_conversation(client, f"{duration} 分钟")
+            response = client.post(
+                f"/api/conversations/{conversation['id']}/messages",
+                json={
+                    "text": "主题",
+                    "duration": duration,
+                    "model": "deepseek-chat",
+                },
+            )
+            assert response.status_code == 202
 
     def test_send_active_run_conflict(self, app: Starlette, client: TestClient):
         async def slow_script(ctx):
@@ -274,6 +287,25 @@ class TestModels:
                 "kimi-k2-0905-preview",
             }
             assert all(m["provider"] != "qwen" for m in models)
+
+    def test_custom_model_ids_are_returned(self, tmp_path):
+        settings = make_settings(
+            tmp_path,
+            deepseek_model_id="deepseek-reasoner",
+            dashscope_model_id="qwen-max",
+            moonshot_model_id="moonshot-v1-auto",
+        )
+        app = create_app(settings=settings)
+        with TestClient(app) as test_client:
+            conversation = create_conversation(test_client)
+            models = test_client.get(
+                f"/api/conversations/{conversation['id']}/models"
+            ).json()["models"]
+            assert {item["model"] for item in models} == {
+                "deepseek-reasoner",
+                "qwen-max",
+                "moonshot-v1-auto",
+            }
 
     def test_real_mode_zero_keys_returns_empty(self, tmp_path):
         """真实模式零配置：返回空列表（前端据此禁用发送）。"""
