@@ -56,6 +56,7 @@ describe('useRunStream 事件分发与连接生命周期', () => {
     const handlers: RunEventHandlers = {
       'run.status': vi.fn(),
       'run.started': vi.fn(),
+      'script.draft.updated': vi.fn(),
       'tts.progress': vi.fn(),
     }
     renderHook(() => useRunStream('run_1', handlers))
@@ -67,6 +68,17 @@ describe('useRunStream 事件分发与连接生命周期', () => {
       es.emit('run.status', { status: 'queued', queue_position: 2, progress: null })
       es.emit('run.status', { status: 'queued', queue_position: 1, progress: null })
       es.emit('run.started', {})
+      es.emit('script.draft.updated', {
+        draft: {
+          conversation_id: 'conv_1',
+          source_run_id: 'run_1',
+          params: { duration: 5, model: 'deepseek-chat' },
+          content: { text: '草稿', segments: [], est_duration: 1 },
+          origin: 'generated',
+          revision: 1,
+          updated_at: 1,
+        },
+      })
       es.emit('tts.progress', { segment: 1, total_segments: 12, stage: 'synthesizing' })
     })
 
@@ -82,6 +94,9 @@ describe('useRunStream 事件分发与连接生命周期', () => {
       progress: null,
     })
     expect(handlers['run.started']).toHaveBeenCalledWith({})
+    expect(handlers['script.draft.updated']).toHaveBeenCalledWith(
+      expect.objectContaining({ draft: expect.objectContaining({ revision: 1 }) }),
+    )
     expect(handlers['tts.progress']).toHaveBeenCalledWith({
       segment: 1,
       total_segments: 12,

@@ -8,10 +8,9 @@ from pathlib import Path
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from .database import NotFoundError, Repository
+from .database import NotFoundError, Repository, RevisionConflictError
 from .errors import ApiError, invalid, not_found
 from .peaks import load_or_compute_peaks
-from .script.markers import parse_script
 
 router = APIRouter(prefix="/api/artifacts", tags=["artifacts"])
 
@@ -22,6 +21,10 @@ MEDIA_TYPES = {"mp3": "audio/mpeg", "wav": "audio/wav"}
 class ArtifactPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     content: dict | None = None
+
+
+class RestoreVersionRequest(BaseModel):
+    expected_revision: int = Field(ge=0)
 
 
 def _repo(request: Request) -> Repository:
@@ -55,6 +58,38 @@ def get_artifact(artifact_id: str, request: Request):
     return _get_artifact(request, artifact_id)
 
 
+@router.get("/{artifact_id}/versions")
+def list_artifact_versions(artifact_id: str, request: Request):
+    artifact = _get_artifact(request, artifact_id)
+    if not artifact["type"].startswith("script"):
+        raise invalid("ARTIFACT_NOT_EDITABLE", "音频产物没有脚本版本")
+    return {"items": _repo(request).list_artifact_versions(artifact_id)}
+
+
+@router.post("/{artifact_id}/versions/{version_id}/restore-draft")
+def restore_artifact_version(
+    artifact_id: str,
+    version_id: str,
+    payload: RestoreVersionRequest,
+    request: Request,
+):
+    artifact = _get_artifact(request, artifact_id)
+    if not artifact["type"].startswith("script"):
+        raise invalid("ARTIFACT_NOT_EDITABLE", "音频产物没有脚本版本")
+    try:
+        return _repo(request).restore_artifact_version_to_draft(
+            artifact_id,
+            version_id,
+            expected_revision=payload.expected_revision,
+        )
+    except NotFoundError:
+        raise not_found("SCRIPT_VERSION_NOT_FOUND", "脚本版本不存在") from None
+    except RevisionConflictError:
+        raise ApiError(
+            "SCRIPT_DRAFT_REVISION_CONFLICT", "草稿已在其他位置更新", 409
+        ) from None
+
+
 @router.patch("/{artifact_id}")
 def patch_artifact(artifact_id: str, payload: ArtifactPatch, request: Request):
     artifact = _get_artifact(request, artifact_id)
@@ -64,15 +99,10 @@ def patch_artifact(artifact_id: str, payload: ArtifactPatch, request: Request):
     if payload.content is not None:
         if not artifact["type"].startswith("script"):
             raise invalid("ARTIFACT_NOT_EDITABLE", "音频产物不支持内容编辑")
-        text = payload.content.get("text")
-        if not isinstance(text, str) or not text.strip():
-            raise invalid("SCRIPT_TEXT_INVALID", "脚本文本不能为空")
-        if len(text) > 20000:
-            raise invalid("SCRIPT_TEXT_INVALID", "脚本文本超出长度限制（20000 字符）")
-        # 编辑闭环：后端重新解析标记（segments/est_duration 重算并存储）
-        parsed = parse_script(text)
-        updates["content"] = {"text": text, **parsed.as_content()}
-        updates["duration"] = parsed.est_duration
+        raise invalid(
+            "SCRIPT_EDIT_VIA_DRAFT_REQUIRED",
+            "脚本内容请先编辑工作草稿，再手动保存为新版本",
+        )
     if not updates:
         raise invalid("ARTIFACT_PATCH_EMPTY", "没有可更新的字段")
     return _repo(request).update_artifact(artifact_id, **updates)

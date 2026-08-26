@@ -83,12 +83,13 @@ class TestConversationCrud:
         detail = client.get(f"/api/conversations/{conversation['id']}").json()
         assert detail["conversation"]["id"] == conversation["id"]
         assert detail["active_run_id"] is None  # 已完成
-        artifact = detail["script_artifact"]
-        assert artifact is not None
-        assert artifact["type"] == "script_meditation"
-        assert artifact["content"]["text"]
-        assert artifact["content"]["segments"]
-        assert artifact["content"]["est_duration"] > 0
+        assert detail["script_artifact"] is None
+        draft = detail["script_draft"]
+        assert draft["origin"] == "generated"
+        assert draft["content"]["text"]
+        assert draft["content"]["segments"]
+        assert draft["content"]["est_duration"] > 0
+        assert detail["has_unsaved_changes"] is True
 
     def test_detail_active_run_reported(self, app: Starlette, client: TestClient):
         """慢速生成期间 detail 聚合返回 active_run_id。"""
@@ -276,7 +277,13 @@ class TestModels:
 
     def test_real_mode_zero_keys_returns_empty(self, tmp_path):
         """真实模式零配置：返回空列表（前端据此禁用发送）。"""
-        settings = make_settings(tmp_path, fake_mode=False)
+        settings = make_settings(
+            tmp_path,
+            fake_mode=False,
+            deepseek_api_key="",
+            dashscope_api_key="",
+            moonshot_api_key="",
+        )
         app = create_app(settings=settings)
         with TestClient(app) as test_client:
             conversation = create_conversation(test_client)

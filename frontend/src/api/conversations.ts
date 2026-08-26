@@ -6,6 +6,8 @@ import type {
   LlmModelsResponse,
   MessagesResponse,
   RunPayload,
+  SaveScriptVersionResponse,
+  ScriptDraft,
   SendMessageRequest,
 } from './types'
 
@@ -33,12 +35,31 @@ export function sendMessage(id: string, payload: SendMessageRequest) {
   return apiFetch<RunPayload>(`/api/conversations/${id}/messages`, { method: 'POST', body: payload })
 }
 
-export function retryMessage(conversationId: string, messageId: string) {
+export function retryMessage(
+  conversationId: string,
+  messageId: string,
+  allowDraftOverwrite = false,
+) {
   return apiFetch<RunPayload>(`/api/conversations/${conversationId}/messages/${messageId}/retry`, {
     method: 'POST',
+    params: allowDraftOverwrite ? { allow_draft_overwrite: 1 } : undefined,
   })
 }
 
 export function listConversationModels(id: string) {
   return apiFetch<LlmModelsResponse>(`/api/conversations/${id}/models`)
+}
+
+export function updateScriptDraft(id: string, text: string, expectedRevision: number) {
+  return apiFetch<ScriptDraft>(`/api/conversations/${id}/script-draft`, {
+    method: 'PATCH',
+    body: { text, expected_revision: expectedRevision },
+  })
+}
+
+export function saveScriptVersion(id: string, expectedRevision: number, name?: string) {
+  return apiFetch<SaveScriptVersionResponse>(`/api/conversations/${id}/script-versions`, {
+    method: 'POST',
+    body: { expected_revision: expectedRevision, ...(name ? { name } : {}) },
+  })
 }

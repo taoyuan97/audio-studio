@@ -106,7 +106,9 @@ export interface MessagesResponse {
 /** GET /api/conversations/{id} 聚合响应 */
 export interface ConversationDetail {
   conversation: Conversation
+  script_draft: ScriptDraft | null
   script_artifact: Artifact | null
+  has_unsaved_changes: boolean
   active_run_id: string | null
 }
 
@@ -124,6 +126,7 @@ export interface SendMessageRequest {
   text: string
   duration: ScriptDuration
   model: string
+  allow_draft_overwrite?: boolean
 }
 
 export interface CreateConversationRequest {
@@ -166,6 +169,39 @@ export interface Artifact {
   audio: ArtifactAudioMeta | null
   created_at: number
   updated_at: number
+  current_version_id: string | null
+  current_version_no: number | null
+}
+
+export type ScriptDraftOrigin = 'generated' | 'manual' | 'restored'
+
+export interface ScriptDraft {
+  conversation_id: string
+  source_run_id: string | null
+  params: Record<string, unknown>
+  content: ScriptContent
+  origin: ScriptDraftOrigin
+  revision: number
+  updated_at: number
+}
+
+export interface ScriptVersion {
+  id: string
+  artifact_id: string
+  version_no: number
+  source_run_id: string | null
+  params: Record<string, unknown>
+  content: ScriptContent
+  created_at: number
+}
+
+export interface ScriptVersionsResponse {
+  items: ScriptVersion[]
+}
+
+export interface SaveScriptVersionResponse {
+  artifact: Artifact
+  version: ScriptVersion
 }
 
 export interface ArtifactsResponse {
@@ -174,7 +210,6 @@ export interface ArtifactsResponse {
 
 export interface UpdateArtifactRequest {
   name?: string
-  content?: { text: string }
 }
 
 export interface DeleteArtifactResponse {
@@ -312,11 +347,8 @@ export interface MessageCompletedEvent {
   message: Pick<Message, 'id' | 'role' | 'content' | 'created_at'>
 }
 
-export interface ArtifactUpdatedEvent {
-  artifact: {
-    id: string
-    content: ScriptContent
-  }
+export interface ScriptDraftUpdatedEvent {
+  draft: ScriptDraft
 }
 
 export type TtsStage = 'synthesizing' | 'assembling' | 'encoding'
@@ -337,7 +369,7 @@ export interface MixProgressEvent {
 }
 
 export interface RunCompletedEvent {
-  artifact_id: string
+  artifact_id: string | null
 }
 
 export type RunFailedEvent = ApiErrorBody

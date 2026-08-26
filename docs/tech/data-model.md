@@ -20,8 +20,10 @@
 
 ```text
 conversations 1 ──── N messages
-conversations 1 ──── 1 artifacts(type=script_*)   [会话 1:1 脚本产物，原地更新]
-runs         N ──── 0..1 artifacts                [run 成功产出产物；runs.artifact_id]
+conversations 1 ──── 0..1 script_drafts           [工作草稿，不进入产物库]
+conversations 1 ──── 0..1 artifacts(type=script_*)[逻辑脚本产物，用户首次保存创建]
+artifacts    1 ──── N artifact_versions            [用户手动保存的不可变版本]
+runs         N ──── 0..1 artifacts                [script run 的 artifact_id 为 null]
 artifacts    0..N ─→ 引用 artifacts                [mix.params 引用 voice/bgm id，弱引用不约束删除]
 ```
 
@@ -72,7 +74,7 @@ CREATE TABLE runs (
   result_json      TEXT,                 -- 音乐线：远端结果（E8）；其余 NULL
   error_code       TEXT,                 -- failed 时非空（见 api-contract.md 第 12 节）
   error_message    TEXT,                 -- failed 时非空（脱敏后）
-  artifact_id      TEXT,                 -- completed 时指向产出产物
+  artifact_id      TEXT,                 -- 耗时产物成功时指向产物；script run 为 NULL
   created_at       INTEGER NOT NULL,
   started_at       INTEGER,
   finished_at      INTEGER
@@ -111,11 +113,46 @@ CREATE TABLE artifacts (
   audio_path       TEXT,                 -- 相对 DATA_DIR/audio 的路径；脚本类型 NULL
   audio_format     TEXT,                 -- 'mp3' | 'wav'；脚本类型 NULL
   duration         REAL,                 -- 秒（音频=实测 ffprobe；脚本=est_duration）
+  current_version_id TEXT,               -- 脚本逻辑产物当前版本；音频为 NULL
+  current_version_no INTEGER,            -- 脚本当前版本号；音频为 NULL
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );
 CREATE INDEX idx_artifacts_type ON artifacts(type, created_at DESC);
 ```
+
+### 4.5 script_drafts（会话工作草稿）
+
+```sql
+CREATE TABLE script_drafts (
+  conversation_id  TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  source_run_id    TEXT,
+  params_json      TEXT NOT NULL,
+  content_json     TEXT NOT NULL,
+  origin           TEXT NOT NULL,        -- generated | manual | restored
+  revision         INTEGER NOT NULL,     -- 乐观并发控制，单调递增
+  updated_at       INTEGER NOT NULL
+);
+```
+
+草稿自动持久化但不属于产物库；AI 生成成功后原子替换 generated 草稿，人工编辑与版本恢复分别标记 manual/restored。更新接口携带 `expected_revision`，不一致返回 409。
+
+### 4.6 artifact_versions（脚本不可变版本）
+
+```sql
+CREATE TABLE artifact_versions (
+  id               TEXT PRIMARY KEY,
+  artifact_id      TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  version_no       INTEGER NOT NULL,
+  source_run_id    TEXT,
+  params_json      TEXT NOT NULL,
+  content_json     TEXT NOT NULL,
+  created_at       INTEGER NOT NULL,
+  UNIQUE(artifact_id, version_no)
+);
+```
+
+版本只在用户手动保存时追加；artifact 的 content/params/duration 是当前版本物化快照，供既有产物库与 TTS 接口兼容读取。现有脚本 artifact 初始化时幂等迁移为 v1。
 
 ## 5. artifacts 多态 schema（params_json / content_json 完整定义）
 
@@ -220,7 +257,7 @@ data/
 
 | 操作 | 联动清理 |
 |---|---|
-| `DELETE /api/artifacts/{id}` | 删 `artifacts/{id}.*` 音频 + `peaks/{id}.json`；mix.params 中的弱引用 id 保留（前端展示"已删除"） |
+| `DELETE /api/artifacts/{id}` | 级联删除脚本历史版本；音频另删 `artifacts/{id}.*` + `peaks/{id}.json`；mix.params 中弱引用保留 |
 | 会话删除（本期无此入口） | messages 级联；脚本产物 `conversation_id` 置 NULL（产物保留在库） |
 | 音色试听缓存 | 永久保留（免计费回放）；仅手动清 DATA_DIR 时移除 |
 | 峰值缓存 | 与产物同生命周期；产物 PATCH 脚本编辑（无音频）不影响 |

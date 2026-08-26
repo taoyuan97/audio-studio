@@ -3,10 +3,12 @@ import {
   ArrowRightOutlined,
   CheckOutlined,
   EditOutlined,
+  HistoryOutlined,
+  SaveOutlined,
   SendOutlined,
   StopOutlined,
 } from '@ant-design/icons'
-import { App, Button, Input, Skeleton, Tag } from 'antd'
+import { App, Button, Input, List, Modal, Skeleton, Tag } from 'antd'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
@@ -15,11 +17,13 @@ import {
   listConversationModels,
   listMessages,
   retryMessage,
+  saveScriptVersion,
   sendMessage,
+  updateScriptDraft,
 } from '../api/conversations'
-import { updateArtifact } from '../api/artifacts'
+import { listArtifactVersions, restoreArtifactVersion } from '../api/artifacts'
 import { cancelRun } from '../api/runs'
-import type { ScriptContent, ScriptDuration } from '../api/types'
+import type { ScriptContent, ScriptDuration, ScriptVersion } from '../api/types'
 import { useRunStream } from '../lib/sse'
 import { useUiStore } from '../stores/uiStore'
 import DurationSelect from '../components/DurationSelect'
@@ -29,12 +33,6 @@ import ScriptView from '../features/script-workspace/ScriptView'
 
 /** 生成步骤动画（结果区，对齐原型语义） */
 const GEN_STEPS = ['解析主题与目标时长', '模型流式生成脚本', '标记解析与产物入库']
-
-const SUGGESTIONS = [
-  '帮我生成一段深海放松的引导脚本',
-  '最近睡前容易焦虑，想要一段睡眠引导冥想',
-  '来一份清晨唤醒的正念练习',
-]
 
 type RunPhase = 'queued' | 'streaming' | 'finalizing'
 
@@ -66,7 +64,9 @@ export default function MeditationWorkspacePage() {
   })
 
   const conversation = detailQuery.data?.conversation
+  const scriptDraft = detailQuery.data?.script_draft
   const artifact = detailQuery.data?.script_artifact
+  const hasUnsavedChanges = detailQuery.data?.has_unsaved_changes ?? false
   const models = useMemo(() => modelsQuery.data?.models ?? [], [modelsQuery.data])
   const messages = useMemo(() => messagesQuery.data?.items ?? [], [messagesQuery.data])
 
@@ -85,14 +85,17 @@ export default function MeditationWorkspacePage() {
   const [model, setModel] = useState('')
   const [input, setInput] = useState('')
 
-  // 参数默认值：产物 params（最近一次生成）优先，其次可用模型列表首个
+  // 参数默认值：工作草稿（最近一次生成）优先，其次当前正式版本与模型列表首个
   useEffect(() => {
-    const params = artifact?.params as { duration?: number; model?: string } | null
+    const params = (scriptDraft?.params ?? artifact?.params) as {
+      duration?: number
+      model?: string
+    } | null
     if (params?.duration && [5, 15, 30].includes(params.duration)) {
       setDuration(params.duration as ScriptDuration)
     }
     if (params?.model) setModel(params.model)
-  }, [artifact?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scriptDraft?.revision, artifact?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 模型选择：默认取可用列表首个；历史产物/参数中的 model 不在当前可用列表时回退
   // （如后续移除了对应 Key），避免 Select 显示一个不可用的裸 model id
@@ -137,10 +140,14 @@ export default function MeditationWorkspacePage() {
       setRunPhase('finalizing')
       queryClient.invalidateQueries({ queryKey: ['messages', conversationId] })
     },
-    'artifact.updated': () => {
+    'script.draft.updated': () => {
       queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
     },
-    'run.completed': exitRunState,
+    'run.completed': () => {
+      queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
+      queryClient.invalidateQueries({ queryKey: ['messages', conversationId] })
+      exitRunState()
+    },
     'run.failed': (payload) => {
       setFailure({ code: payload.code, message: payload.message })
       exitRunState()
@@ -158,16 +165,38 @@ export default function MeditationWorkspacePage() {
     setActiveRunId(runId)
   }
 
-  const handleSend = async () => {
+  const [overwriteOpen, setOverwriteOpen] = useState(false)
+  const [overwriteIsRetry, setOverwriteIsRetry] = useState(false)
+  const [sendAfterSave, setSendAfterSave] = useState(false)
+
+  const submitMessage = async (allowDraftOverwrite = false) => {
     const text = input.trim()
     if (!text || running || !conversationId) return
     try {
-      const run = await sendMessage(conversationId, { text, duration, model })
+      const run = await sendMessage(conversationId, {
+        text,
+        duration,
+        model,
+        allow_draft_overwrite: allowDraftOverwrite,
+      })
       enterRunState(run.run_id)
       setInput('')
     } catch (error) {
       handleActionError(error, '发送失败')
     }
+  }
+
+  const handleSend = () => {
+    if (editing || editMutation.isPending) return
+    const protectedDraft =
+      hasUnsavedChanges &&
+      (scriptDraft?.origin === 'manual' || scriptDraft?.origin === 'restored')
+    if (protectedDraft) {
+      setOverwriteIsRetry(false)
+      setOverwriteOpen(true)
+      return
+    }
+    void submitMessage()
   }
 
   const handleCancel = async () => {
@@ -184,14 +213,30 @@ export default function MeditationWorkspacePage() {
     [messages],
   )
 
-  const handleRetry = async () => {
+  const submitRetry = async (allowDraftOverwrite = false) => {
     if (!conversationId || !lastUserMessage) return
     try {
-      const run = await retryMessage(conversationId, lastUserMessage.id)
+      const run = await retryMessage(
+        conversationId,
+        lastUserMessage.id,
+        allowDraftOverwrite,
+      )
       enterRunState(run.run_id)
     } catch (error) {
       handleActionError(error, '重试失败')
     }
+  }
+
+  const handleRetry = () => {
+    const protectedDraft =
+      hasUnsavedChanges &&
+      (scriptDraft?.origin === 'manual' || scriptDraft?.origin === 'restored')
+    if (protectedDraft) {
+      setOverwriteIsRetry(true)
+      setOverwriteOpen(true)
+      return
+    }
+    void submitRetry()
   }
 
   function handleActionError(error: unknown, fallback: string) {
@@ -207,24 +252,116 @@ export default function MeditationWorkspacePage() {
     pushBanner('error', fallback)
   }
 
-  // ---------------- 脚本编辑闭环 ----------------
+  // ---------------- 工作草稿编辑与版本保存 ----------------
 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const [saveNameOpen, setSaveNameOpen] = useState(false)
+  const [scriptName, setScriptName] = useState('')
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [selectedVersion, setSelectedVersion] = useState<ScriptVersion | null>(null)
+  const [failedDraftText, setFailedDraftText] = useState<string | null>(null)
 
   const editMutation = useMutation({
-    mutationFn: (text: string) =>
-      updateArtifact(artifact!.id, { content: { text } }),
-    onSuccess: () => {
-      setEditing(false)
+    mutationFn: ({ text, revision }: { text: string; revision: number }) =>
+      updateScriptDraft(conversationId, text, revision),
+    onSuccess: (updatedDraft) => {
+      setFailedDraftText(null)
+      queryClient.setQueryData(
+        ['conversation', conversationId],
+        (current: typeof detailQuery.data) =>
+          current
+            ? { ...current, script_draft: updatedDraft, has_unsaved_changes: true }
+            : current,
+      )
       queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
-      message.success('脚本已保存并重新解析')
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      setFailedDraftText(variables.text)
       if (error instanceof ApiError) message.error(error.message)
-      else message.error('保存失败')
+      else message.error('草稿自动保存失败')
     },
   })
+
+  useEffect(() => {
+    if (
+      !editing ||
+      !scriptDraft ||
+      editMutation.isPending ||
+      draft === failedDraftText ||
+      draft === scriptDraft.content.text
+    ) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      editMutation.mutate({ text: draft, revision: scriptDraft.revision })
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [draft, editing, scriptDraft, editMutation.isPending, failedDraftText]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveVersionMutation = useMutation({
+    mutationFn: (name?: string) =>
+      saveScriptVersion(conversationId, scriptDraft!.revision, name),
+    onSuccess: async (result) => {
+      setSaveNameOpen(false)
+      setScriptName('')
+      queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
+      queryClient.invalidateQueries({ queryKey: ['script-versions', result.artifact.id] })
+      message.success(`已保存为 v${result.version.version_no}`)
+      if (sendAfterSave) {
+        setSendAfterSave(false)
+        setOverwriteOpen(false)
+        if (overwriteIsRetry) await submitRetry(true)
+        else await submitMessage(true)
+      }
+    },
+    onError: (error) => {
+      setSendAfterSave(false)
+      if (error instanceof ApiError) {
+        if (error.code === 'SCRIPT_DRAFT_REVISION_CONFLICT') {
+          queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
+        }
+        message.error(error.message)
+      }
+      else message.error('保存版本失败')
+    },
+  })
+
+  const versionsQuery = useQuery({
+    queryKey: ['script-versions', artifact?.id],
+    queryFn: () => listArtifactVersions(artifact!.id),
+    enabled: versionsOpen && Boolean(artifact?.id),
+  })
+
+  const restoreMutation = useMutation({
+    mutationFn: (version: ScriptVersion) =>
+      restoreArtifactVersion(artifact!.id, version.id, scriptDraft!.revision),
+    onSuccess: () => {
+      setVersionsOpen(false)
+      setSelectedVersion(null)
+      queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
+      message.success('历史版本已恢复为工作草稿，保存后将产生新版本')
+    },
+    onError: (error) => {
+      if (error instanceof ApiError) {
+        if (error.code === 'SCRIPT_DRAFT_REVISION_CONFLICT') {
+          queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
+        }
+        message.error(error.message)
+      }
+      else message.error('恢复版本失败')
+    },
+  })
+
+  const handleSaveVersion = (continueAfterSave = false) => {
+    setSendAfterSave(continueAfterSave)
+    if (!artifact) {
+      setScriptName('')
+      setSaveNameOpen(true)
+      return
+    }
+    saveVersionMutation.mutate()
+  }
 
   // ---------------- 渲染 ----------------
 
@@ -268,26 +405,30 @@ export default function MeditationWorkspacePage() {
               value={input}
               rows={2}
               maxLength={20000}
-              disabled={running}
+              disabled={running || editing || editMutation.isPending}
               placeholder="描述你想要的冥想主题，如：帮我生成一段缓解睡前焦虑的引导脚本"
               onChange={(event) => setInput(event.target.value)}
               onPressEnter={(event) => {
                 if (!event.shiftKey) {
                   event.preventDefault()
-                  void handleSend()
+                  handleSend()
                 }
               }}
             />
           </div>
           <div className="composer-foot">
             <div className="composer-tools">
-              <DurationSelect value={duration} onChange={setDuration} disabled={running} />
+              <DurationSelect
+                value={duration}
+                onChange={setDuration}
+                disabled={running || editing || editMutation.isPending}
+              />
               <ModelSelect
                 models={models}
                 value={model || undefined}
                 onChange={setModel}
                 loading={modelsQuery.isLoading}
-                disabled={running}
+                disabled={running || editing || editMutation.isPending}
               />
             </div>
             {!modelsQuery.isLoading && models.length === 0 ? (
@@ -310,8 +451,8 @@ export default function MeditationWorkspacePage() {
               <Button
                 type="primary"
                 icon={<SendOutlined />}
-                disabled={!input.trim() || !model}
-                onClick={() => void handleSend()}
+                disabled={!input.trim() || !model || editing || editMutation.isPending}
+                onClick={handleSend}
                 aria-label="发送"
               >
                 发送
@@ -325,26 +466,171 @@ export default function MeditationWorkspacePage() {
       <section className="card result-card" aria-label="脚本结果区">
         {running ? (
           <GeneratingPanel phase={runPhase} queuePosition={queuePosition} streamingText={streamingText} />
-        ) : artifact?.content ? (
+        ) : scriptDraft?.content ? (
           <ScriptResultCard
-            artifactId={artifact.id}
-            targetDuration={(artifact.params as { duration?: number } | null)?.duration ?? duration}
-            content={artifact.content}
+            targetDuration={(scriptDraft.params as { duration?: number }).duration ?? duration}
+            content={scriptDraft.content}
             editing={editing}
             draft={draft}
-            saving={editMutation.isPending}
-            onDraftChange={setDraft}
+            savingDraft={editMutation.isPending}
+            draftSaveFailed={failedDraftText === draft}
+            hasArtifact={Boolean(artifact)}
+            hasUnsavedChanges={hasUnsavedChanges}
+            currentVersionNo={artifact?.current_version_no ?? null}
+            savingVersion={saveVersionMutation.isPending}
+            onDraftChange={(value) => {
+              setFailedDraftText(null)
+              setDraft(value)
+            }}
             onStartEdit={() => {
-              setDraft(artifact.content!.text)
+              setDraft(scriptDraft.content.text)
               setEditing(true)
             }}
-            onCancelEdit={() => setEditing(false)}
-            onSaveEdit={() => editMutation.mutate(draft)}
+            onFinishEdit={() => {
+              if (
+                scriptDraft &&
+                draft.trim() &&
+                draft !== scriptDraft.content.text &&
+                !editMutation.isPending
+              ) {
+                editMutation.mutate(
+                  { text: draft, revision: scriptDraft.revision },
+                  { onSuccess: () => setEditing(false) },
+                )
+                return
+              }
+              setEditing(false)
+            }}
+            onSaveVersion={() => handleSaveVersion()}
+            onOpenVersions={() => {
+              setSelectedVersion(null)
+              setVersionsOpen(true)
+            }}
           />
         ) : (
-          <EmptyScriptGuide onPick={(text) => setInput(text)} />
+          <EmptyScriptGuide />
         )}
       </section>
+
+      <Modal
+        title="保存脚本"
+        open={saveNameOpen}
+        okText="保存为 v1"
+        cancelText="取消"
+        confirmLoading={saveVersionMutation.isPending}
+        okButtonProps={{ disabled: !scriptName.trim() }}
+        onCancel={() => {
+          setSaveNameOpen(false)
+          setSendAfterSave(false)
+        }}
+        onOk={() => saveVersionMutation.mutate(scriptName.trim())}
+        destroyOnHidden
+      >
+        <div className="save-script-field">
+          <label htmlFor="script-name">脚本名称</label>
+          <Input
+            id="script-name"
+            value={scriptName}
+            maxLength={100}
+            autoFocus
+            placeholder={conversation.title}
+            onChange={(event) => setScriptName(event.target.value)}
+            onPressEnter={() => {
+              if (scriptName.trim() && !saveVersionMutation.isPending) {
+                saveVersionMutation.mutate(scriptName.trim())
+              }
+            }}
+          />
+          <span>首次保存需要命名；后续保存将在同一脚本下追加版本。</span>
+        </div>
+      </Modal>
+
+      <Modal
+        title="未保存的人工草稿"
+        open={overwriteOpen}
+        closable={!saveVersionMutation.isPending}
+        footer={[
+          <Button key="cancel" onClick={() => setOverwriteOpen(false)}>
+            取消
+          </Button>,
+          <Button
+            key="overwrite"
+            danger
+            onClick={() => {
+              setOverwriteOpen(false)
+              if (overwriteIsRetry) void submitRetry(true)
+              else void submitMessage(true)
+            }}
+          >
+            覆盖草稿并继续
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={saveVersionMutation.isPending}
+            onClick={() => handleSaveVersion(true)}
+          >
+            先保存并继续
+          </Button>,
+        ]}
+        onCancel={() => setOverwriteOpen(false)}
+        destroyOnHidden
+      >
+        <p>当前草稿包含人工编辑或从历史版本恢复的内容。继续生成会在成功后替换这份草稿。</p>
+      </Modal>
+
+      <Modal
+        title={artifact ? `${artifact.name} · 版本历史` : '版本历史'}
+        open={versionsOpen}
+        width={860}
+        footer={null}
+        onCancel={() => {
+          setVersionsOpen(false)
+          setSelectedVersion(null)
+        }}
+        destroyOnHidden
+        getContainer={false}
+      >
+        <div className="version-history-layout">
+          <List
+            className="version-list"
+            loading={versionsQuery.isLoading}
+            dataSource={versionsQuery.data?.items ?? []}
+            locale={{ emptyText: '暂无版本' }}
+            renderItem={(version) => (
+              <List.Item
+                className={selectedVersion?.id === version.id ? 'active' : ''}
+                onClick={() => setSelectedVersion(version)}
+              >
+                <List.Item.Meta
+                  title={`v${version.version_no}`}
+                  description={new Date(version.created_at).toLocaleString('zh-CN')}
+                />
+              </List.Item>
+            )}
+          />
+          <div className="version-preview">
+            {selectedVersion ? (
+              <>
+                <div className="version-preview-head">
+                  <strong>v{selectedVersion.version_no}</strong>
+                  <Button
+                    type="primary"
+                    size="small"
+                    loading={restoreMutation.isPending}
+                    onClick={() => restoreMutation.mutate(selectedVersion)}
+                  >
+                    恢复为草稿
+                  </Button>
+                </div>
+                <ScriptView content={selectedVersion.content} />
+              </>
+            ) : (
+              <div className="version-empty">选择一个版本查看内容</div>
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -386,16 +672,21 @@ function GeneratingPanel({
 }
 
 interface ScriptResultCardProps {
-  artifactId: string
   targetDuration: number
   content: ScriptContent
   editing: boolean
   draft: string
-  saving: boolean
+  savingDraft: boolean
+  draftSaveFailed: boolean
+  hasArtifact: boolean
+  hasUnsavedChanges: boolean
+  currentVersionNo: number | null
+  savingVersion: boolean
   onDraftChange: (value: string) => void
   onStartEdit: () => void
-  onCancelEdit: () => void
-  onSaveEdit: () => void
+  onFinishEdit: () => void
+  onSaveVersion: () => void
+  onOpenVersions: () => void
 }
 
 function ScriptResultCard({
@@ -403,17 +694,31 @@ function ScriptResultCard({
   content,
   editing,
   draft,
-  saving,
+  savingDraft,
+  draftSaveFailed,
+  hasArtifact,
+  hasUnsavedChanges,
+  currentVersionNo,
+  savingVersion,
   onDraftChange,
   onStartEdit,
-  onCancelEdit,
-  onSaveEdit,
+  onFinishEdit,
+  onSaveVersion,
+  onOpenVersions,
 }: ScriptResultCardProps) {
   return (
     <div className="script-result-card">
       <div className="card-title-row">
         <span className="card-title">生成结果</span>
         <Tag color="blue">冥想脚本</Tag>
+        <span style={{ flex: 1 }} />
+        {currentVersionNo ? (
+          <Button size="small" type="text" icon={<HistoryOutlined />} onClick={onOpenVersions}>
+            v{currentVersionNo} · 版本历史
+          </Button>
+        ) : (
+          <Tag>未保存为脚本</Tag>
+        )}
       </div>
       <div className="param-chips">
         <span className="param-chip">目标时长：{targetDuration} 分钟</span>
@@ -429,13 +734,21 @@ function ScriptResultCard({
             onChange={(event) => onDraftChange(event.target.value)}
             placeholder="编辑脚本文本，支持标记：[停顿 5s] [情绪:温柔] [吸气] [呼气] [语速:慢速]"
           />
-          <div className="field-hint">保存后后端将重新解析标记，徽章与时间轴按最新文本刷新。</div>
+          <div className="field-hint">
+            {savingDraft
+              ? '草稿保存中…'
+              : draftSaveFailed
+                ? '草稿自动保存失败；修改内容或点击“完成编辑”重试。'
+                : '草稿已自动保存，但尚未保存为版本。'}
+          </div>
           <div className="btn-row">
-            <Button size="small" onClick={onCancelEdit}>
-              取消
-            </Button>
-            <Button size="small" type="primary" loading={saving} onClick={onSaveEdit}>
-              保存并重新解析
+            <Button
+              size="small"
+              type="primary"
+              disabled={!draft.trim() || savingDraft}
+              onClick={onFinishEdit}
+            >
+              完成编辑
             </Button>
           </div>
         </>
@@ -445,6 +758,16 @@ function ScriptResultCard({
           <div className="btn-row">
             <Button size="small" icon={<EditOutlined />} onClick={onStartEdit}>
               编辑脚本
+            </Button>
+            <Button
+              size="small"
+              type="primary"
+              icon={<SaveOutlined />}
+              loading={savingVersion}
+              disabled={!hasUnsavedChanges || savingDraft}
+              onClick={onSaveVersion}
+            >
+              {hasArtifact ? '保存新版本' : '保存脚本'}
             </Button>
             <span style={{ flex: 1 }} />
             <Button
@@ -457,28 +780,25 @@ function ScriptResultCard({
               送去 TTS
             </Button>
           </div>
-          <div className="note">产物已自动入库（会话 1:1 原地更新）；「送去 TTS」将在 T004 任务中开放。</div>
+          <div className="note">
+            {hasUnsavedChanges
+              ? '当前是未保存草稿；AI 生成和人工编辑不会覆盖已保存版本。'
+              : `当前草稿已保存为 v${currentVersionNo ?? 1}。`}
+          </div>
         </>
       )}
     </div>
   )
 }
 
-function EmptyScriptGuide({ onPick }: { onPick: (text: string) => void }) {
+function EmptyScriptGuide() {
   return (
     <div className="empty-state">
       <div className="es-title">尚未生成脚本</div>
       <div className="es-desc">
         在左侧对话中描述你的主题并发送
         <br />
-        生成结果可编辑并自动存入产物库
-      </div>
-      <div className="suggest-list">
-        {SUGGESTIONS.map((suggestion) => (
-          <button key={suggestion} type="button" className="suggest-item" onClick={() => onPick(suggestion)}>
-            {suggestion}
-          </button>
-        ))}
+        生成结果可编辑，保存为版本后进入产物库
       </div>
     </div>
   )

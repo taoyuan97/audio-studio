@@ -63,13 +63,15 @@ class TestArtifacts:
         assert response.status_code == 200
         assert response.json()["name"] == "新名字"
 
-    def test_patch_script_content(self, app: Starlette, client: TestClient):
+    def test_patch_script_content_requires_draft_version_flow(
+        self, app: Starlette, client: TestClient
+    ):
         script = create_script_artifact(app)
         response = client.patch(
             f"/api/artifacts/{script['id']}", json={"content": {"text": "编辑后 [停顿 2s]"}}
         )
-        assert response.status_code == 200
-        assert response.json()["content"]["text"] == "编辑后 [停顿 2s]"
+        assert response.status_code == 422
+        assert response.json()["code"] == "SCRIPT_EDIT_VIA_DRAFT_REQUIRED"
 
     def test_patch_audio_content_rejected(self, app: Starlette, client: TestClient):
         voice = create_voice_artifact(app)
@@ -79,13 +81,15 @@ class TestArtifacts:
         assert response.status_code == 422
         assert response.json()["code"] == "ARTIFACT_NOT_EDITABLE"
 
-    def test_patch_script_empty_text_rejected(self, app: Starlette, client: TestClient):
+    def test_patch_script_empty_content_still_requires_draft_flow(
+        self, app: Starlette, client: TestClient
+    ):
         script = create_script_artifact(app)
         response = client.patch(
             f"/api/artifacts/{script['id']}", json={"content": {"text": "  "}}
         )
         assert response.status_code == 422
-        assert response.json()["code"] == "SCRIPT_TEXT_INVALID"
+        assert response.json()["code"] == "SCRIPT_EDIT_VIA_DRAFT_REQUIRED"
 
     def test_delete_removes_files(self, app: Starlette, client: TestClient):
         voice = create_voice_artifact(app)

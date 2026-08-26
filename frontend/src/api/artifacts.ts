@@ -4,6 +4,8 @@ import type {
   ArtifactsResponse,
   DeleteArtifactResponse,
   PeaksResponse,
+  ScriptDraft,
+  ScriptVersionsResponse,
   UpdateArtifactRequest,
 } from './types'
 
@@ -25,6 +27,17 @@ export function deleteArtifact(id: string) {
 
 export function getPeaks(id: string, signal?: AbortSignal) {
   return apiFetch<PeaksResponse>(`/api/artifacts/${id}/peaks`, { signal })
+}
+
+export function listArtifactVersions(id: string) {
+  return apiFetch<ScriptVersionsResponse>(`/api/artifacts/${id}/versions`)
+}
+
+export function restoreArtifactVersion(id: string, versionId: string, expectedRevision: number) {
+  return apiFetch<ScriptDraft>(`/api/artifacts/${id}/versions/${versionId}/restore-draft`, {
+    method: 'POST',
+    body: { expected_revision: expectedRevision },
+  })
 }
 
 /** 音频文件流地址（audio/mpeg 或 audio/wav，支持 Range） */

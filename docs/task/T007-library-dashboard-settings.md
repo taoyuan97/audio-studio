@@ -28,9 +28,9 @@
 **产物库（`/library`）**
 
 - 类型 Tab：全部 / 冥想脚本 / 人声 / 背景音 / 成品（二期加播客脚本）。
-- 卡片列表：名称、类型徽章、参数摘要（脚本=时长/模型；voice=引擎/音色/语速/时长；bgm=风格/时长；mix=轨道组合/时长/格式）、生成时间。
-- 详情弹层：完整 params + content（脚本类文本/segments 渲染复用 ScriptView；音频类内嵌 AudioPlayer + 波形）。
-- 操作：重命名（PATCH name）、删除（确认弹窗，提示音频文件连带删除）、**送下游**（按 type 映射：script_*→`/tts?artifact_id=`；voice→`/mixdown?voice_id=`；bgm→`/mixdown?bgm_id=`）、清空全部（二次确认）。
+- 卡片列表：名称、类型徽章、参数摘要（脚本=当前版本号/时长/模型；voice=引擎/音色/语速/时长；bgm=风格/时长；mix=轨道组合/时长/格式）、生成时间。
+- 详情弹层：完整 params + content（脚本类展示当前版本并复用 ScriptView，提供版本历史查看/恢复为工作台草稿入口；音频类内嵌 AudioPlayer + 波形）。草稿与历史版本不作为独立产物卡片。
+- 操作：重命名（PATCH name）、删除（确认弹窗；脚本级联删除全部版本，音频连带删除文件）、**送下游**（按 type 映射：script_*→`/tts?artifact_id=`；voice→`/mixdown?voice_id=`；bgm→`/mixdown?bgm_id=`）、清空全部（二次确认）。
 - 空态引导（无产物时按类型引导去对应生成页）。
 - 删除后列表与各下游页下拉同步（invalidate artifacts keys）。
 

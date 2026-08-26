@@ -106,12 +106,16 @@
 ```json
 {
   "conversation": { "id": "conv_...", "scene": "meditation", "title": "深海放松", "created_at": 0, "updated_at": 0 },
-  "script_artifact": { "id": "art_...", "type": "script_meditation", "name": "深海放松·脚本", "content": { "text": "...", "segments": [], "est_duration": 300 } },
+  "script_draft": { "conversation_id": "conv_...", "content": { "text": "...", "segments": [], "est_duration": 300 }, "params": { "duration": 15, "model": "deepseek-chat" }, "origin": "generated", "revision": 2, "updated_at": 0 },
+  "script_artifact": { "id": "art_...", "type": "script_meditation", "name": "深海放松", "current_version_no": 1, "content": { "text": "...", "segments": [], "est_duration": 300 } },
+  "has_unsaved_changes": true,
   "active_run_id": "run_..."
 }
 ```
 
-- `script_artifact`：会话 1:1 脚本产物，未生成过为 `null`。
+- `script_draft`：当前工作草稿，尚未生成过为 `null`；不进入产物库。
+- `script_artifact`：会话 1:1 逻辑脚本产物，首次手动保存前为 `null`。
+- `has_unsaved_changes`：草稿内容/参数是否不同于当前正式版本。
 - `active_run_id`：该会话 queued/running 的剧本 run，无则 `null`（前端据此重连 SSE）。
 - 404：`CONVERSATION_NOT_FOUND`。
 
@@ -145,12 +149,12 @@
 - 请求：
 
 ```json
-{ "text": "生成一段深海放松冥想", "duration": 15, "model": "deepseek-chat" }
+{ "text": "生成一段深海放松冥想", "duration": 15, "model": "deepseek-chat", "allow_draft_overwrite": false }
 ```
 
 - 校验：`text` 非空 ≤20000 字符；`duration` ∈ {5,15,30}；`model` 必须在可用模型列表。
 - 响应 202：run 载荷（`kind: "script"`）。
-- 409：`CONVERSATION_RUN_ACTIVE`（该会话已有活动 run）。
+- 409：`CONVERSATION_RUN_ACTIVE`；manual/restored 未保存草稿且未确认覆盖时为 `SCRIPT_DRAFT_OVERWRITE_CONFIRM_REQUIRED`。
 - 422：`SCRIPT_TEXT_INVALID` / `SCRIPT_PARAMS_INVALID`。
 
 ### 4.7 POST /api/conversations/{id}/messages/{mid}/retry
@@ -180,6 +184,23 @@
 - 注册模型与 Key 对应：`deepseek-chat`←`DEEPSEEK_API_KEY`、`qwen-plus`←`DASHSCOPE_API_KEY`、`kimi-k2-0905-preview`←`MOONSHOT_API_KEY`。
 - 兜底：页面加载后 Key 配置发生变化时，发送接口仍返回 422 `SCRIPT_LLM_NOT_CONFIGURED`。
 
+### 4.9 PATCH /api/conversations/{id}/script-draft
+
+人工编辑工作草稿并重新解析标记。
+
+- 请求：`{ "text": "...", "expected_revision": 2 }`
+- 响应 200：更新后的 script_draft（`origin: "manual"`，revision +1）。
+- 409：`SCRIPT_DRAFT_REVISION_CONFLICT`；404：`SCRIPT_DRAFT_NOT_FOUND`。
+
+### 4.10 POST /api/conversations/{id}/script-versions
+
+把当前草稿手动保存为不可变版本。
+
+- 首次请求：`{ "name": "睡前深度放松", "expected_revision": 2 }`，名称 1–100 字符；创建逻辑 artifact + v1。
+- 后续请求：`{ "expected_revision": 4 }`；在同一 artifact 下追加 v2/v3…。
+- 响应 201：`{ "artifact": {...}, "version": {...} }`。
+- 409：`SCRIPT_VERSION_UNCHANGED`；422：`SCRIPT_NAME_REQUIRED`。
+
 ## 5. run（全局统一）
 
 ### 5.1 GET /api/runs/{run_id}
@@ -201,7 +222,7 @@
 }
 ```
 
-- 终态示例：`status: "completed"` 时 `artifact_id` 非空；`failed` 时 `error: { "code": "...", "message": "..." }`。
+- 终态示例：`status: "completed"` 时，script run 的 `artifact_id` 为 `null`，其他产物 run 非空；`failed` 时 `error: { "code": "...", "message": "..." }`。
 - 404：`RUN_NOT_FOUND`。
 
 ### 5.2 GET /api/runs/{run_id}/events
@@ -253,22 +274,17 @@ SSE 事件流（协议见第 11 节）。
 
 ### 6.3 PATCH /api/artifacts/{id}
 
-重命名 / 脚本编辑（原地更新）。
+重命名产物。脚本正文不可绕过草稿/版本链路直接修改。
 
-- 请求（二选一或同时）：
+- 请求：
 
 ```json
 { "name": "新名称" }
 ```
 
-```json
-{ "content": { "text": "编辑后的脚本文本..." } }
-```
-
-- `content` 仅脚本类型允许；后端重新解析标记（segments/est_duration 重算）并存储。
-- 校验：`name` 1–100 字符；`content.text` 非空 ≤20000 字符。
+- 校验：`name` 1–100 字符。
 - 响应 200：更新后 artifact 完整对象。
-- 422：`SCRIPT_TEXT_INVALID` / `ARTIFACT_NOT_EDITABLE`（音频类型带 content）。
+- 422：脚本带 content 返回 `SCRIPT_EDIT_VIA_DRAFT_REQUIRED`；音频带 content 返回 `ARTIFACT_NOT_EDITABLE`。
 
 ### 6.4 DELETE /api/artifacts/{id}
 
@@ -283,7 +299,20 @@ SSE 事件流（协议见第 11 节）。
 - 响应 200：`audio/mpeg` 或 `audio/wav`；支持 HTTP Range（`<audio>` seek 依赖）。
 - 404：`ARTIFACT_NOT_FOUND` / `ARTIFACT_NO_AUDIO`（脚本类型）。
 
-### 6.6 GET /api/artifacts/{id}/peaks
+### 6.6 GET /api/artifacts/{id}/versions
+
+脚本不可变版本列表，按 version_no 倒序；草稿不在此列表。
+
+- 响应 200：`{ "items": [{ "id": "ver_...", "artifact_id": "art_...", "version_no": 2, "params": {}, "content": {}, "created_at": 0 }] }`。
+
+### 6.7 POST /api/artifacts/{id}/versions/{version_id}/restore-draft
+
+把历史版本复制为会话工作草稿，不改变 artifact 当前版本。
+
+- 请求：`{ "expected_revision": 4 }`
+- 响应 200：更新后的 script_draft（`origin: "restored"`）。
+- 后续手动保存会追加新版本，不重写历史。
+### 6.8 GET /api/artifacts/{id}/peaks
 
 波形峰值 JSON（首次计算并缓存）。
 
@@ -490,11 +519,11 @@ SSE 事件流（协议见第 11 节）。
 | 通用 | `run.started` | `{}` | 出队开始执行 |
 | script | `assistant.delta` | `{delta: "文本增量"}` | 流式脚本文本增量 |
 | script | `message.completed` | `{message: {id, role, content, created_at}}` | 消息定稿（写入 messages 表） |
-| script | `artifact.updated` | `{artifact: {id, content: {text, segments, est_duration}}}` | 会话 1:1 脚本产物已更新 |
+| script | `script.draft.updated` | `{draft: {content, params, origin, revision, updated_at}}` | AI 生成成功，工作草稿已原子替换 |
 | tts | `tts.progress` | `{segment, total_segments, stage}` | 分段进度（stage: `synthesizing|assembling|encoding`） |
 | music | `music.progress` | `{phase, waited_s}` | `phase: generating|downloading|processing`；generating 期 5s 心跳 |
 | mixdown | `mix.progress` | `{phase}` | `phase: prep|ducking|encode` |
-| 通用 | `run.completed` | `{artifact_id}` | 成功（剧本线此前必有 artifact.updated） |
+| 通用 | `run.completed` | `{artifact_id}` | 成功；script run 为 `null`，其他产物任务为新产物 id |
 | 通用 | `run.failed` | `{code, message}` | 失败，临时内容丢弃 |
 | 通用 | `run.cancelled` | `{}` | 取消，临时内容丢弃 |
 
@@ -546,4 +575,11 @@ SSE 事件流（协议见第 11 节）。
 | `ARTIFACT_NOT_FOUND` | 404 | 产物不存在 | 返回列表 |
 | `ARTIFACT_NO_AUDIO` | 404 | 脚本产物请求音频 | 前端不应发起 |
 | `ARTIFACT_NOT_EDITABLE` | 422 | 音频产物带 content 编辑 | 前端不应发起 |
+| `SCRIPT_DRAFT_NOT_FOUND` | 404 | 尚无可编辑/保存的工作草稿 | 引导先生成脚本 |
+| `SCRIPT_DRAFT_REVISION_CONFLICT` | 409 | 草稿 revision 已变化 | 刷新草稿后重试 |
+| `SCRIPT_DRAFT_OVERWRITE_CONFIRM_REQUIRED` | 409 | 人工/恢复草稿未确认覆盖 | 弹三项保护确认 |
+| `SCRIPT_NAME_REQUIRED` | 422 | 首次保存未输入脚本名称 | 打开命名弹窗 |
+| `SCRIPT_VERSION_UNCHANGED` | 409 | 草稿与当前版本相同 | 禁用重复保存 |
+| `SCRIPT_VERSION_NOT_FOUND` | 404 | 历史版本不存在 | 刷新版本列表 |
+| `SCRIPT_EDIT_VIA_DRAFT_REQUIRED` | 422 | 绕过草稿直接 PATCH 脚本正文 | 改走草稿与保存版本接口 |
 | `BACKEND_UNREACHABLE` | — | 网络不可达（前端本地归一化） | 全局提示横幅 |

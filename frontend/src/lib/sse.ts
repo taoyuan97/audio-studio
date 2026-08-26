@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import type {
-  ArtifactUpdatedEvent,
   AssistantDeltaEvent,
   MessageCompletedEvent,
   MixProgressEvent,
@@ -8,6 +7,7 @@ import type {
   RunCompletedEvent,
   RunFailedEvent,
   RunStatusEvent,
+  ScriptDraftUpdatedEvent,
   TtsProgressEvent,
 } from '../api/types'
 
@@ -17,7 +17,7 @@ export const RUN_EVENT_NAMES = [
   'run.started',
   'assistant.delta',
   'message.completed',
-  'artifact.updated',
+  'script.draft.updated',
   'tts.progress',
   'music.progress',
   'mix.progress',
@@ -40,7 +40,7 @@ export interface RunEventPayloads {
   'run.started': Record<string, never>
   'assistant.delta': AssistantDeltaEvent
   'message.completed': MessageCompletedEvent
-  'artifact.updated': ArtifactUpdatedEvent
+  'script.draft.updated': ScriptDraftUpdatedEvent
   'tts.progress': TtsProgressEvent
   'music.progress': MusicProgressEvent
   'mix.progress': MixProgressEvent

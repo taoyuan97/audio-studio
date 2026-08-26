@@ -71,7 +71,7 @@
 | 剧本生成（A3） | 单次 LLM 调用 + 流式，**不用 LangGraph**；ModelRegistry 模式沿用（OpenAI 兼容 httpx 直连，无 LangChain 依赖） |
 | 长任务协议（A2） | TTS/BGM/混音/剧本统一 run + SSE |
 | 任务并发（C3） | 全局单任务串行队列（FIFO），队列上限 8 → 超出 409 `RUN_QUEUE_FULL` |
-| 数据模型（A4） | 简化：conversations + messages + runs + **单 artifacts 表**（type 区分五种产物）；脚本产物与会话 1:1，编辑/再生成**原地更新**，无版本表 |
+| 数据模型（A4 修订） | conversations/messages/runs/artifacts + script_drafts + artifact_versions；会话至多一个逻辑脚本产物，AI/编辑写草稿，用户手动追加版本 |
 | 存储（B1） | 本地 `data/audio/` 音频文件（StaticFiles 托管）+ SQLite 单库；放弃 OSS |
 | TTS（B2） | 统一 `TTSProvider` 接口，阿里云 DashScope + 火山引擎双适配；接入代码移植自 meditation-guide-studio（已验证） |
 | 情绪标记（B3/E7） | 阿里云 `qwen-audio-3.0-tts-plus` 为默认模型，`[情绪:x]` → instruction 直传（已验证支持）；火山按 `TTSCapabilities` 能力声明降级为普通朗读；不引入 sambert 旧模型分支 |
@@ -177,11 +177,11 @@ audio-studio/
 
 ### 5.3 SSE 事件协议（概览，事件全表与时序详见 [api-contract.md](api-contract.md) 第 11 节）
 
-统一入口 `GET /api/runs/{run_id}/events`，事件按 run.kind 分发：通用（`run.status` 连接快照含队列位置与持久化进度、`run.started/completed/failed/cancelled` 终态关闭）+ 各线事件（剧本：`assistant.delta`/`message.completed`/`artifact.updated`；TTS：`tts.progress` 分段进度；BGM：`music.progress` 等待心跳；混音：`mix.progress` phase）。
+统一入口 `GET /api/runs/{run_id}/events`，事件按 run.kind 分发：通用（`run.status` 连接快照含队列位置与持久化进度、`run.started/completed/failed/cancelled` 终态关闭）+ 各线事件（剧本：`assistant.delta`/`message.completed`/`script.draft.updated`；TTS：`tts.progress` 分段进度；BGM：`music.progress` 等待心跳；混音：`mix.progress` phase）。
 
 ### 5.4 数据存储（概览，详见 [data-model.md](data-model.md)）
 
-SQLite 单库（WAL）四表：`conversations` / `messages`（params 含 duration/model）/ `runs`（见 5.1，含 progress_json 与 result_json）/ `artifacts`（单表多态，type：`script_meditation`、`voice`、`bgm`、`mix`，二期加 `script_podcast`；脚本产物 `content_json={text, segments[], est_duration}` 后端解析为唯一事实源，音频产物 `params_json` 完整参数快照）。
+SQLite 单库（WAL）：核心表 `conversations/messages/runs/artifacts`，剧本另有 `script_drafts` 工作草稿与 `artifact_versions` 不可变版本；artifact 保存当前版本物化快照，后端 marker 解析仍是唯一事实源。
 
 文件：`data/audio/artifacts/{id}.mp3|.wav`（音频产物）、`data/audio/previews/{engine}_{voice}.wav`（试听缓存）、`data/audio/peaks/{id}.json`（波形峰值缓存）；`DATA_DIR` 配置，正式项目数据从零开始。
 
@@ -196,7 +196,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
   - 模型列表**仅返回已配置 Key 的可用项**（`FAKE_MODE` 返回全量），前端下拉只展示可用模型；发送时后端仍校验 `SCRIPT_LLM_NOT_CONFIGURED` 作兜底；`FAKE_MODE` 时返回内置示例脚本的伪流。
 - **`app/script/prompts.py`**：冥想专用 Prompt 模板——角色设定 + 标记规范（`[停顿 Ns]`/`[情绪:x]`/`[语速:x]`/`[吸气]`/`[呼气]`）+ 结构要求（引导进入→主体→收尾）+ 时长-篇幅映射（5min≈1200 字 / 15min≈3200 字 / 30min≈6000 字，含停顿折算）。
 - **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`{kind: speech|pause, text?, emotion?, speed?, seconds?}`）+ 预估时长（语速档 × 字数 + 停顿求和）。生成完成与 PATCH 编辑时均执行，随产物存储，前端直接渲染徽章与时间轴，**不在 TS 重复实现解析**。
-- **会话流**：POST messages → 组装多轮上下文（历史消息 + 本轮指令）→ LLM 流式 → `assistant.delta` 逐段推送 → 完成后写 messages + 更新会话 1:1 脚本产物（首建或原地覆盖）→ `artifact.updated`。
+- **会话流**：POST messages → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 messages + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
 - 多轮 refinement：历史消息全部入上下文（预算内截断），用户可自然语言微调。
 
 ### 5.6 TTS 线设计
@@ -305,7 +305,7 @@ LLM_TIMEOUT_SECONDS=120
 
 ### 6.3 数据层
 
-- **TanStack Query**：会话/消息/产物/defaults/stats 走 Query；发送消息、重试、取消、编辑产物、删除走 Mutation + 按 key 精确失效；`run.completed` / `artifact.updated` 事件统一 `invalidateQueries` 收口。
+- **TanStack Query**：会话/消息/草稿/版本/产物/defaults/stats 走 Query；发送、草稿自动保存、保存版本、恢复、取消、删除走 Mutation；`run.completed` / `script.draft.updated` 精确失效收口。
 - **Zustand**：仅运行态（activeRunId、流式临时内容、队列状态）与全局 UI 态；不缓存服务端数据副本。
 - **API 层**：`client.ts` 错误归一化 `ApiError{status, code, message}`（透出 5.2 错误码）；`types.ts` 与后端契约一一对应，手工维护（锚定契约测试）。
 

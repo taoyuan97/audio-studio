@@ -59,7 +59,7 @@ export default function MeditationListPage() {
   const items = conversationsQuery.data?.items ?? []
 
   return (
-    <div className="page-stack">
+    <div className="page-stack meditation-list-page">
       <div className="page-head">
         <div>
           <h2 className="page-title">冥想会话</h2>

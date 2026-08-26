@@ -2,7 +2,7 @@
 
 - 发送/重试 → 写 user 消息（重试复用既有）→ enqueue script run（202）。
 - handler：组装上下文 → LLM 流式（assistant.delta）→ 写 assistant 消息
-  （message.completed）→ 更新会话 1:1 脚本产物（artifact.updated）→ run.completed。
+  （message.completed）→ 更新会话工作草稿（script.draft.updated）→ run.completed。
 - FAKE_MODE：内置示例冥想脚本按 duration 档位伪流式输出。
 """
 
@@ -15,12 +15,17 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from .config import Settings
-from .database import NotFoundError, Repository
+from .database import (
+    DuplicateVersionError,
+    NotFoundError,
+    Repository,
+    RevisionConflictError,
+)
 from .errors import ApiError, conflict, invalid, not_found
 from .llm.registry import ModelRegistry
 from .runs import RunContext
 from .script.fake import generate_fake_script
-from .script.markers import ParsedScript, parse_script
+from .script.markers import parse_script
 from .script.prompts import (
     REFINEMENT_GUIDE,
     SYSTEM_PROMPT,
@@ -55,6 +60,17 @@ class SendMessageRequest(BaseModel):
     text: str
     duration: int
     model: str
+    allow_draft_overwrite: bool = False
+
+
+class UpdateScriptDraftRequest(BaseModel):
+    text: str
+    expected_revision: int = Field(ge=0)
+
+
+class SaveScriptVersionRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=100)
+    expected_revision: int = Field(ge=1)
 
 
 # ---------------- 工具 ----------------
@@ -117,9 +133,12 @@ def list_conversations(
 def get_conversation_detail(conversation_id: str, request: Request):
     conversation = _get_conversation(request, conversation_id)
     manager = request.app.state.runs
+    repo = _repo(request)
     return {
         "conversation": conversation,
-        "script_artifact": _repo(request).get_script_artifact(conversation_id),
+        "script_draft": repo.get_script_draft(conversation_id),
+        "script_artifact": repo.get_script_artifact(conversation_id),
+        "has_unsaved_changes": repo.script_draft_has_unsaved_changes(conversation_id),
         "active_run_id": manager.active_run_id_for_conversation(conversation_id),
     }
 
@@ -154,8 +173,8 @@ async def send_message(
     conversation_id: str, payload: SendMessageRequest, request: Request
 ):
     _get_conversation(request, conversation_id)
-    text = payload.text.strip()
-    if not text or len(text) > MAX_TEXT_LENGTH:
+    text = payload.text
+    if not text.strip() or len(text) > MAX_TEXT_LENGTH:
         raise invalid("SCRIPT_TEXT_INVALID", "消息文本为空或超出长度限制")
     _validate_script_params(
         _registry(request), request.app.state.settings, payload.duration, payload.model
@@ -165,6 +184,17 @@ async def send_message(
         raise conflict("CONVERSATION_RUN_ACTIVE", "该会话已有正在进行的生成任务")
 
     repo = _repo(request)
+    draft = repo.get_script_draft(conversation_id)
+    if (
+        draft
+        and draft["origin"] in ("manual", "restored")
+        and repo.script_draft_has_unsaved_changes(conversation_id)
+        and not payload.allow_draft_overwrite
+    ):
+        raise conflict(
+            "SCRIPT_DRAFT_OVERWRITE_CONFIRM_REQUIRED",
+            "当前草稿包含未保存的人工修改，请确认后继续生成",
+        )
     repo.insert_message(
         conversation_id,
         "user",
@@ -177,7 +207,12 @@ async def send_message(
 
 
 @router.post("/{conversation_id}/messages/{message_id}/retry", status_code=202)
-async def retry_message(conversation_id: str, message_id: str, request: Request):
+async def retry_message(
+    conversation_id: str,
+    message_id: str,
+    request: Request,
+    allow_draft_overwrite: bool = Query(default=False),
+):
     _get_conversation(request, conversation_id)
     repo = _repo(request)
     try:
@@ -204,6 +239,17 @@ async def retry_message(conversation_id: str, message_id: str, request: Request)
     manager = request.app.state.runs
     if manager.active_run_id_for_conversation(conversation_id):
         raise conflict("CONVERSATION_RUN_ACTIVE", "该会话已有正在进行的生成任务")
+    draft = repo.get_script_draft(conversation_id)
+    if (
+        draft
+        and draft["origin"] in ("manual", "restored")
+        and repo.script_draft_has_unsaved_changes(conversation_id)
+        and not allow_draft_overwrite
+    ):
+        raise conflict(
+            "SCRIPT_DRAFT_OVERWRITE_CONFIRM_REQUIRED",
+            "当前草稿包含未保存的人工修改，请确认后继续生成",
+        )
     run = await manager.enqueue("script", conversation_id=conversation_id)
     return manager.run_payload(run)
 
@@ -212,6 +258,57 @@ async def retry_message(conversation_id: str, message_id: str, request: Request)
 def list_models(conversation_id: str, request: Request):
     _get_conversation(request, conversation_id)
     return {"models": _registry(request).list_models()}
+
+
+@router.patch("/{conversation_id}/script-draft")
+def update_script_draft(
+    conversation_id: str, payload: UpdateScriptDraftRequest, request: Request
+):
+    _get_conversation(request, conversation_id)
+    text = payload.text.strip()
+    if not text or len(text) > MAX_TEXT_LENGTH:
+        raise invalid("SCRIPT_TEXT_INVALID", "脚本文本为空或超出长度限制")
+    repo = _repo(request)
+    current = repo.get_script_draft(conversation_id)
+    if current is None:
+        raise not_found("SCRIPT_DRAFT_NOT_FOUND", "脚本草稿不存在")
+    parsed = parse_script(text)
+    try:
+        return repo.upsert_script_draft(
+            conversation_id,
+            source_run_id=current["source_run_id"],
+            params=current["params"],
+            content={"text": text, **parsed.as_content()},
+            origin="manual",
+            expected_revision=payload.expected_revision,
+        )
+    except RevisionConflictError:
+        raise conflict("SCRIPT_DRAFT_REVISION_CONFLICT", "草稿已在其他位置更新") from None
+
+
+@router.post("/{conversation_id}/script-versions", status_code=201)
+def save_script_version(
+    conversation_id: str, payload: SaveScriptVersionRequest, request: Request
+):
+    _get_conversation(request, conversation_id)
+    repo = _repo(request)
+    artifact = repo.get_script_artifact(conversation_id)
+    name = payload.name.strip() if payload.name else None
+    if artifact is None and not name:
+        raise invalid("SCRIPT_NAME_REQUIRED", "首次保存必须输入脚本名称")
+    try:
+        saved_artifact, version = repo.save_script_version(
+            conversation_id,
+            expected_revision=payload.expected_revision,
+            name=name,
+        )
+    except NotFoundError:
+        raise not_found("SCRIPT_DRAFT_NOT_FOUND", "脚本草稿不存在") from None
+    except DuplicateVersionError:
+        raise conflict("SCRIPT_VERSION_UNCHANGED", "草稿与当前版本相同") from None
+    except RevisionConflictError:
+        raise conflict("SCRIPT_DRAFT_REVISION_CONFLICT", "草稿已在其他位置更新") from None
+    return {"artifact": saved_artifact, "version": version}
 
 
 # ---------------- script run handler ----------------
@@ -266,16 +363,25 @@ def make_script_handler(
         repo.touch_conversation(conversation_id)
         await ctx.emit("message.completed", {"message": _message_payload(message)})
 
-        # 会话 1:1 脚本产物：首次创建 / 再生成原地更新（A4 无版本历史）
+        # 生成成功只更新工作草稿；正式版本仅由用户手动保存。
         parsed = parse_script(script_text)
-        artifact = _upsert_script_artifact(
-            repo, conversation, script_text, parsed, duration, model, topic, ctx.run_id
+        draft = repo.upsert_script_draft(
+            conversation["id"],
+            source_run_id=ctx.run_id,
+            params={
+                "topic": topic,
+                "matched_topic": topic,
+                "duration": duration,
+                "model": model,
+            },
+            content={"text": script_text, **parsed.as_content()},
+            origin="generated",
         )
         await ctx.emit(
-            "artifact.updated",
-            {"artifact": {"id": artifact["id"], "content": artifact["content"]}},
+            "script.draft.updated",
+            {"draft": draft},
         )
-        return artifact["id"]
+        return None
 
     return handle
 
@@ -307,39 +413,3 @@ async def _fake_stream(text: str):
     for index in range(0, len(text), FAKE_CHUNK_SIZE):
         await asyncio.sleep(FAKE_CHUNK_INTERVAL)
         yield text[index : index + FAKE_CHUNK_SIZE]
-
-
-def _upsert_script_artifact(
-    repo: Repository,
-    conversation: dict[str, Any],
-    text: str,
-    parsed: ParsedScript,
-    duration: int,
-    model: str,
-    topic: str,
-    run_id: str,
-) -> dict[str, Any]:
-    content = {"text": text, **parsed.as_content()}
-    params = {
-        "topic": topic,
-        "matched_topic": topic,
-        "duration": duration,
-        "model": model,
-    }
-    existing = repo.get_script_artifact(conversation["id"])
-    if existing is not None:
-        return repo.update_artifact(
-            existing["id"],
-            content=content,
-            params=params,
-            duration=parsed.est_duration,
-        )
-    return repo.insert_artifact(
-        type="script_meditation",
-        name=f"{conversation['title']}·脚本",
-        conversation_id=conversation["id"],
-        source_run_id=run_id,
-        params=params,
-        content=content,
-        duration=parsed.est_duration,
-    )

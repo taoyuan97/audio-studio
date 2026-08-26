@@ -1,4 +1,4 @@
-"""SQLite 数据层：四表 DDL 与仓储方法（docs/tech/data-model.md 单一事实源）。
+"""SQLite 数据层：核心 DDL 与仓储方法（docs/tech/data-model.md 单一事实源）。
 
 - sqlite3 同步连接（每次操作短连接，WAL 模式），本地单机场景足够。
 - 时间戳统一 Unix 毫秒整数；ID 格式 {prefix}_{unix_ms}_{6位随机}。
@@ -62,10 +62,35 @@ CREATE TABLE IF NOT EXISTS artifacts (
   audio_path       TEXT,
   audio_format     TEXT,
   duration         REAL,
+  current_version_id TEXT,
+  current_version_no INTEGER,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts(type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS script_drafts (
+  conversation_id  TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+  source_run_id    TEXT,
+  params_json      TEXT NOT NULL,
+  content_json     TEXT NOT NULL,
+  origin           TEXT NOT NULL,
+  revision         INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS artifact_versions (
+  id               TEXT PRIMARY KEY,
+  artifact_id      TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  version_no       INTEGER NOT NULL,
+  source_run_id    TEXT,
+  params_json      TEXT NOT NULL,
+  content_json     TEXT NOT NULL,
+  created_at       INTEGER NOT NULL,
+  UNIQUE(artifact_id, version_no)
+);
+CREATE INDEX IF NOT EXISTS idx_artifact_versions_artifact
+  ON artifact_versions(artifact_id, version_no DESC);
 """
 
 RUN_ACTIVE_STATUSES = ("queued", "running")
@@ -86,6 +111,14 @@ def _loads(value: str | None) -> Any:
 
 class NotFoundError(LookupError):
     """行不存在（调用方映射为 404）。"""
+
+
+class RevisionConflictError(RuntimeError):
+    """工作草稿 revision 与客户端期望不一致。"""
+
+
+class DuplicateVersionError(RuntimeError):
+    """工作草稿与当前正式版本完全一致。"""
 
 
 class Repository:
@@ -117,6 +150,76 @@ class Repository:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA)
+            self._migrate_artifact_version_columns(connection)
+            self._migrate_existing_script_versions(connection)
+
+    @staticmethod
+    def _migrate_artifact_version_columns(connection: sqlite3.Connection) -> None:
+        """为旧数据库幂等补齐 artifact 当前版本字段。"""
+        columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(artifacts)")
+        }
+        if "current_version_id" not in columns:
+            connection.execute("ALTER TABLE artifacts ADD COLUMN current_version_id TEXT")
+        if "current_version_no" not in columns:
+            connection.execute("ALTER TABLE artifacts ADD COLUMN current_version_no INTEGER")
+
+    @staticmethod
+    def _migrate_existing_script_versions(connection: sqlite3.Connection) -> None:
+        """现有脚本 artifact 幂等迁移为 v1，并回填当前版本指针。"""
+        rows = connection.execute(
+            """SELECT * FROM artifacts
+               WHERE type LIKE 'script%' AND content_json IS NOT NULL"""
+        ).fetchall()
+        for row in rows:
+            latest = connection.execute(
+                """SELECT id, version_no FROM artifact_versions
+                   WHERE artifact_id=? ORDER BY version_no DESC LIMIT 1""",
+                (row["id"],),
+            ).fetchone()
+            if latest is None:
+                version_id = new_id("ver")
+                connection.execute(
+                    """INSERT INTO artifact_versions
+                       (id, artifact_id, version_no, source_run_id, params_json,
+                        content_json, created_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (
+                        version_id,
+                        row["id"],
+                        1,
+                        row["source_run_id"],
+                        row["params_json"],
+                        row["content_json"],
+                        row["created_at"],
+                    ),
+                )
+                latest = {"id": version_id, "version_no": 1}
+            if (
+                row["current_version_id"] != latest["id"]
+                or row["current_version_no"] != latest["version_no"]
+            ):
+                connection.execute(
+                    """UPDATE artifacts
+                       SET current_version_id=?, current_version_no=? WHERE id=?""",
+                    (latest["id"], latest["version_no"], row["id"]),
+                )
+            if row["conversation_id"] is not None:
+                connection.execute(
+                    """INSERT OR IGNORE INTO script_drafts
+                       (conversation_id, source_run_id, params_json, content_json,
+                        origin, revision, updated_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (
+                        row["conversation_id"],
+                        row["source_run_id"],
+                        row["params_json"],
+                        row["content_json"],
+                        "generated",
+                        1,
+                        row["updated_at"],
+                    ),
+                )
 
     def recover_stale_runs(self) -> int:
         """服务启动时把遗留 queued/running run 标记为 failed（RUN_INTERRUPTED）。"""
@@ -381,6 +484,244 @@ class Repository:
             "finished_at": row["finished_at"],
         }
 
+    # ---------------- script drafts ----------------
+
+    def get_script_draft(self, conversation_id: str) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM script_drafts WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+        return self._script_draft_dict(row) if row else None
+
+    def script_draft_has_unsaved_changes(self, conversation_id: str) -> bool:
+        with self.connect() as connection:
+            draft = connection.execute(
+                "SELECT params_json, content_json FROM script_drafts WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if draft is None:
+                return False
+            artifact = connection.execute(
+                """SELECT params_json, content_json FROM artifacts
+                   WHERE conversation_id=? AND type='script_meditation'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (conversation_id,),
+            ).fetchone()
+        return artifact is None or (
+            artifact["content_json"] != draft["content_json"]
+            or artifact["params_json"] != draft["params_json"]
+        )
+
+    def upsert_script_draft(
+        self,
+        conversation_id: str,
+        *,
+        source_run_id: str | None,
+        params: dict[str, Any],
+        content: dict[str, Any],
+        origin: str,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        timestamp = now_ms()
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT revision FROM script_drafts WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            current_revision = int(row["revision"]) if row else 0
+            if expected_revision is not None and expected_revision != current_revision:
+                raise RevisionConflictError
+            next_revision = current_revision + 1
+            connection.execute(
+                """INSERT INTO script_drafts
+                   (conversation_id, source_run_id, params_json, content_json,
+                    origin, revision, updated_at)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(conversation_id) DO UPDATE SET
+                     source_run_id=excluded.source_run_id,
+                     params_json=excluded.params_json,
+                     content_json=excluded.content_json,
+                     origin=excluded.origin,
+                     revision=excluded.revision,
+                     updated_at=excluded.updated_at""",
+                (
+                    conversation_id,
+                    source_run_id,
+                    json.dumps(params, ensure_ascii=False),
+                    json.dumps(content, ensure_ascii=False),
+                    origin,
+                    next_revision,
+                    timestamp,
+                ),
+            )
+        return self.get_script_draft(conversation_id)  # type: ignore[return-value]
+
+    def save_script_version(
+        self,
+        conversation_id: str,
+        *,
+        expected_revision: int,
+        name: str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """把当前草稿追加为不可变版本，并原子更新 artifact 当前快照。"""
+        timestamp = now_ms()
+        with self.transaction() as connection:
+            draft = connection.execute(
+                "SELECT * FROM script_drafts WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if draft is None:
+                raise NotFoundError("脚本草稿不存在")
+            if int(draft["revision"]) != expected_revision:
+                raise RevisionConflictError
+
+            artifact = connection.execute(
+                """SELECT * FROM artifacts
+                   WHERE conversation_id=? AND type='script_meditation'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (conversation_id,),
+            ).fetchone()
+
+            if artifact is None:
+                if not name:
+                    raise ValueError("首次保存必须输入脚本名称")
+                artifact_id = new_id("art")
+                connection.execute(
+                    """INSERT INTO artifacts
+                       (id, type, name, conversation_id, source_run_id, params_json,
+                        content_json, audio_path, audio_format, duration,
+                        current_version_id, current_version_no, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        artifact_id,
+                        "script_meditation",
+                        name,
+                        conversation_id,
+                        draft["source_run_id"],
+                        draft["params_json"],
+                        draft["content_json"],
+                        None,
+                        None,
+                        _loads(draft["content_json"])["est_duration"],
+                        None,
+                        None,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                version_no = 1
+            else:
+                artifact_id = artifact["id"]
+                if (
+                    artifact["content_json"] == draft["content_json"]
+                    and artifact["params_json"] == draft["params_json"]
+                ):
+                    raise DuplicateVersionError
+                version_no = int(artifact["current_version_no"] or 0) + 1
+
+            version_id = new_id("ver")
+            connection.execute(
+                """INSERT INTO artifact_versions
+                   (id, artifact_id, version_no, source_run_id, params_json,
+                    content_json, created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (
+                    version_id,
+                    artifact_id,
+                    version_no,
+                    draft["source_run_id"],
+                    draft["params_json"],
+                    draft["content_json"],
+                    timestamp,
+                ),
+            )
+            content = _loads(draft["content_json"])
+            connection.execute(
+                """UPDATE artifacts SET source_run_id=?, params_json=?, content_json=?,
+                   duration=?, current_version_id=?, current_version_no=?, updated_at=?
+                   WHERE id=?""",
+                (
+                    draft["source_run_id"],
+                    draft["params_json"],
+                    draft["content_json"],
+                    content["est_duration"],
+                    version_id,
+                    version_no,
+                    timestamp,
+                    artifact_id,
+                ),
+            )
+
+        return self.get_artifact(artifact_id), self.get_artifact_version(
+            artifact_id, version_id
+        )
+
+    def list_artifact_versions(self, artifact_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM artifact_versions WHERE artifact_id=?
+                   ORDER BY version_no DESC""",
+                (artifact_id,),
+            ).fetchall()
+        return [self._artifact_version_dict(row) for row in rows]
+
+    def get_artifact_version(
+        self, artifact_id: str, version_id: str
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM artifact_versions WHERE id=? AND artifact_id=?""",
+                (version_id, artifact_id),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("脚本版本不存在")
+        return self._artifact_version_dict(row)
+
+    def restore_artifact_version_to_draft(
+        self,
+        artifact_id: str,
+        version_id: str,
+        *,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        artifact = self.get_artifact(artifact_id)
+        if not artifact["conversation_id"]:
+            raise NotFoundError("脚本会话不存在")
+        version = self.get_artifact_version(artifact_id, version_id)
+        return self.upsert_script_draft(
+            artifact["conversation_id"],
+            source_run_id=version["source_run_id"],
+            params=version["params"],
+            content=version["content"],
+            origin="restored",
+            expected_revision=expected_revision,
+        )
+
+    @staticmethod
+    def _script_draft_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "conversation_id": row["conversation_id"],
+            "source_run_id": row["source_run_id"],
+            "params": _loads(row["params_json"]),
+            "content": _loads(row["content_json"]),
+            "origin": row["origin"],
+            "revision": row["revision"],
+            "updated_at": row["updated_at"],
+        }
+
+    @staticmethod
+    def _artifact_version_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "artifact_id": row["artifact_id"],
+            "version_no": row["version_no"],
+            "source_run_id": row["source_run_id"],
+            "params": _loads(row["params_json"]),
+            "content": _loads(row["content_json"]),
+            "created_at": row["created_at"],
+        }
+
     # ---------------- artifacts ----------------
 
     def insert_artifact(
@@ -524,6 +865,8 @@ class Repository:
             "content": _loads(row["content_json"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "current_version_id": row["current_version_id"],
+            "current_version_no": row["current_version_no"],
         }
         if row["audio_path"]:
             item["audio"] = {

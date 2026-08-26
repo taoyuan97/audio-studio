@@ -10,6 +10,7 @@ import App from './App'
 import { queryClient } from './lib/queryClient'
 import { themeTokens } from './styles/theme'
 import './styles/global.css'
+import './styles/meditation.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

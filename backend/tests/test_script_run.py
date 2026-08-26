@@ -1,7 +1,7 @@
 """script 线 run 执行测试（FAKE_MODE 流式）：
 
-- SSE 事件序列（assistant.delta 有序 → message.completed → artifact.updated → run.completed）
-- 会话 1:1 脚本产物原地更新（再生成/编辑 id 不变）
+- SSE 事件序列（assistant.delta 有序 → message.completed → script.draft.updated → run.completed）
+- 工作草稿 + 会话 1:1 逻辑产物 + 手动不可变版本
 - refinement 上下文组装（历史消息入上下文 + 预算截断）
 - 取消丢弃临时内容 / 失败路径
 """
@@ -19,6 +19,7 @@ from app.conversations import (
     CONTEXT_MESSAGE_LIMIT,
     _assemble_llm_messages,
 )
+from app.database import Repository
 from app.errors import ApiError
 from app.main import create_app
 
@@ -69,7 +70,7 @@ def collect_sse(client: TestClient, run_id: str) -> list[tuple[str, dict]]:
 class TestSSESequence:
     def test_full_event_sequence(self, app: Starlette, client: TestClient):
         """契约时序：run.status → run.started → assistant.delta* →
-        message.completed → artifact.updated → run.completed。
+        message.completed → script.draft.updated → run.completed。
 
         占位 demo run 先占住 worker，确保跟踪 run 在排队期完成 SSE 连接。
         """
@@ -93,8 +94,8 @@ class TestSSESequence:
         # 事件相对顺序
         assert names.index("run.started") < names.index("assistant.delta")
         assert names.index("assistant.delta") < names.index("message.completed")
-        assert names.index("message.completed") < names.index("artifact.updated")
-        assert names.index("artifact.updated") < names.index("run.completed")
+        assert names.index("message.completed") < names.index("script.draft.updated")
+        assert names.index("script.draft.updated") < names.index("run.completed")
 
         # delta 有序且拼接等于定稿消息内容
         deltas = [data["delta"] for name, data in events if name == "assistant.delta"]
@@ -106,16 +107,18 @@ class TestSSESequence:
         assert completed["message"]["role"] == "assistant"
         assert completed["message"]["content"] == "".join(deltas).strip()
 
-        # artifact.updated 载荷结构
-        updated = next(data for name, data in events if name == "artifact.updated")
-        assert updated["artifact"]["id"]
-        content = updated["artifact"]["content"]
+        # script.draft.updated 载荷结构
+        updated = next(
+            data for name, data in events if name == "script.draft.updated"
+        )
+        assert updated["draft"]["revision"] == 1
+        content = updated["draft"]["content"]
         assert content["text"] == completed["message"]["content"]
         assert content["segments"] and content["est_duration"] > 0
 
-        # run.completed 的 artifact_id 与产物一致
+        # 剧本 run 不自动创建产物
         final = next(data for name, data in events if name == "run.completed")
-        assert final["artifact_id"] == updated["artifact"]["id"]
+        assert final["artifact_id"] is None
 
     def test_message_persisted_after_run(self, client: TestClient):
         conversation = create_conversation(client)
@@ -129,14 +132,33 @@ class TestSSESequence:
         assert [m["role"] for m in messages] == ["user", "assistant"]
 
 
-class TestArtifactOneToOne:
-    def test_regenerate_updates_in_place(self, client: TestClient):
-        """再生成：1:1 脚本产物原地更新，id 不变（A4）。"""
+class TestDraftAndVersions:
+    def test_generate_draft_then_save_versions(self, client: TestClient):
         conversation = create_conversation(client)
         run1 = send_message(client, conversation["id"], "来一段深海放松")
         wait_run_terminal(client, run1["run_id"])
         detail1 = client.get(f"/api/conversations/{conversation['id']}").json()
-        artifact1 = detail1["script_artifact"]
+        assert detail1["script_artifact"] is None
+        assert detail1["script_draft"]["origin"] == "generated"
+
+        missing_name = client.post(
+            f"/api/conversations/{conversation['id']}/script-versions",
+            json={"expected_revision": detail1["script_draft"]["revision"]},
+        )
+        assert missing_name.status_code == 422
+        assert missing_name.json()["code"] == "SCRIPT_NAME_REQUIRED"
+
+        save1 = client.post(
+            f"/api/conversations/{conversation['id']}/script-versions",
+            json={
+                "name": "深海放松",
+                "expected_revision": detail1["script_draft"]["revision"],
+            },
+        )
+        assert save1.status_code == 201
+        artifact1 = save1.json()["artifact"]
+        assert artifact1["current_version_no"] == 1
+        assert save1.json()["version"]["content"] == detail1["script_draft"]["content"]
 
         run2 = send_message(client, conversation["id"], "再温柔一些，缩短到 5 分钟")
         wait_run_terminal(client, run2["run_id"])
@@ -144,22 +166,42 @@ class TestArtifactOneToOne:
         artifact2 = detail2["script_artifact"]
 
         assert artifact2["id"] == artifact1["id"]
-        assert artifact2["updated_at"] >= artifact1["updated_at"]
+        assert artifact2["current_version_no"] == 1
+        assert artifact2["content"] == artifact1["content"]
+        assert detail2["script_draft"]["revision"] == 2
+        assert detail2["has_unsaved_changes"] is True
+
+        save2 = client.post(
+            f"/api/conversations/{conversation['id']}/script-versions",
+            json={"expected_revision": detail2["script_draft"]["revision"]},
+        )
+        assert save2.status_code == 201
+        assert save2.json()["artifact"]["id"] == artifact1["id"]
+        assert save2.json()["version"]["version_no"] == 2
+
+        versions = client.get(f"/api/artifacts/{artifact1['id']}/versions").json()[
+            "items"
+        ]
+        assert [item["version_no"] for item in versions] == [2, 1]
         # 产物列表中也只有一件脚本产物
         items = client.get("/api/artifacts?type=script_meditation").json()["items"]
         ids = [item["id"] for item in items if item["conversation_id"] == conversation["id"]]
         assert ids == [artifact1["id"]]
 
-    def test_edit_script_recomputes_segments(self, client: TestClient):
-        """编辑闭环：PATCH content.text → 后端重解析返回。"""
+    def test_edit_draft_recomputes_segments_and_requires_overwrite_confirmation(
+        self, client: TestClient
+    ):
         conversation = create_conversation(client)
         run = send_message(client, conversation["id"])
-        terminal = wait_run_terminal(client, run["run_id"])
-        artifact_id = terminal["artifact_id"]
+        wait_run_terminal(client, run["run_id"])
+        detail = client.get(f"/api/conversations/{conversation['id']}").json()
 
         response = client.patch(
-            f"/api/artifacts/{artifact_id}",
-            json={"content": {"text": "新的开始 [停顿 4s] [情绪:温柔] 温柔结尾"}},
+            f"/api/conversations/{conversation['id']}/script-draft",
+            json={
+                "text": "新的开始 [停顿 4s] [情绪:温柔] 温柔结尾",
+                "expected_revision": detail["script_draft"]["revision"],
+            },
         )
         assert response.status_code == 200
         content = response.json()["content"]
@@ -169,8 +211,65 @@ class TestArtifactOneToOne:
         assert content["segments"][1] == {"kind": "pause", "seconds": 4.0}
         assert content["segments"][2]["emotion"] == "温柔"
         assert content["est_duration"] > 0
-        # 产物 id 不变（原地更新）
-        assert response.json()["id"] == artifact_id
+        assert response.json()["origin"] == "manual"
+
+        blocked = client.post(
+            f"/api/conversations/{conversation['id']}/messages",
+            json={"text": "继续生成", "duration": 5, "model": "deepseek-chat"},
+        )
+        assert blocked.status_code == 409
+        assert blocked.json()["code"] == "SCRIPT_DRAFT_OVERWRITE_CONFIRM_REQUIRED"
+
+        allowed = client.post(
+            f"/api/conversations/{conversation['id']}/messages",
+            json={
+                "text": "继续生成",
+                "duration": 5,
+                "model": "deepseek-chat",
+                "allow_draft_overwrite": True,
+            },
+        )
+        assert allowed.status_code == 202
+        wait_run_terminal(client, allowed.json()["run_id"])
+
+    def test_duplicate_save_and_restore_as_draft(self, client: TestClient):
+        conversation = create_conversation(client)
+        run = send_message(client, conversation["id"])
+        wait_run_terminal(client, run["run_id"])
+        save = client.post(
+            f"/api/conversations/{conversation['id']}/script-versions",
+            json={
+                "name": "睡前脚本",
+                "expected_revision": client.get(
+                    f"/api/conversations/{conversation['id']}"
+                ).json()["script_draft"]["revision"],
+            },
+        )
+        artifact = save.json()["artifact"]
+        version = save.json()["version"]
+        detail = client.get(f"/api/conversations/{conversation['id']}").json()
+
+        duplicate = client.post(
+            f"/api/conversations/{conversation['id']}/script-versions",
+            json={"expected_revision": detail["script_draft"]["revision"]},
+        )
+        assert duplicate.status_code == 409
+        assert duplicate.json()["code"] == "SCRIPT_VERSION_UNCHANGED"
+
+        stale = client.post(
+            f"/api/conversations/{conversation['id']}/script-versions",
+            json={"expected_revision": detail["script_draft"]["revision"] + 1},
+        )
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "SCRIPT_DRAFT_REVISION_CONFLICT"
+
+        restore = client.post(
+            f"/api/artifacts/{artifact['id']}/versions/{version['id']}/restore-draft",
+            json={"expected_revision": detail["script_draft"]["revision"]},
+        )
+        assert restore.status_code == 200
+        assert restore.json()["origin"] == "restored"
+        assert restore.json()["content"] == version["content"]
 
 
 class TestRefinementContext:
@@ -323,3 +422,32 @@ class TestRecovery:
                 json={"text": "重新生成", "duration": 5, "model": "deepseek-chat"},
             )
             assert resend.status_code == 202
+
+
+class TestVersionMigration:
+    def test_existing_script_artifact_migrates_to_v1_idempotently(self, tmp_path):
+        repo = Repository(tmp_path / "migration.sqlite3")
+        repo.initialize()
+        conversation = repo.create_conversation("meditation", "旧脚本")
+        artifact = repo.insert_artifact(
+            type="script_meditation",
+            name="历史脚本",
+            conversation_id=conversation["id"],
+            source_run_id="run_legacy",
+            params={"topic": "旧主题", "duration": 5, "model": "deepseek-chat"},
+            content={"text": "旧内容", "segments": [], "est_duration": 1.0},
+            duration=1.0,
+        )
+
+        repo.initialize()
+        repo.initialize()
+
+        migrated = repo.get_artifact(artifact["id"])
+        versions = repo.list_artifact_versions(artifact["id"])
+        draft = repo.get_script_draft(conversation["id"])
+        assert migrated["current_version_no"] == 1
+        assert len(versions) == 1
+        assert versions[0]["version_no"] == 1
+        assert versions[0]["content"]["text"] == "旧内容"
+        assert draft is not None
+        assert draft["content"] == versions[0]["content"]
