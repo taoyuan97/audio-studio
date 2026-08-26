@@ -1,0 +1,21 @@
+# Python / backend
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+backend/.env
+backend/data/
+
+# Node / frontend
+node_modules/
+dist/
+.pnpm-cache/
+*.tsbuildinfo
+test-results/
+playwright-report/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

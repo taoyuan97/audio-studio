@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>最终合成 · AI 音频工作台</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="app">
+    <aside id="sidebar-root"></aside>
+    <main class="main">
+      <header class="page-header">
+        <h1>最终合成</h1>
+        <p class="page-desc">人声轨与背景音轨叠加导出。支持相对音量比例、背景音起始偏移与闪避效果；背景音短于人声时循环填充，长于则截断。</p>
+      </header>
+      <div id="page-root"></div>
+    </main>
+  </div>
+  <script src="js/common/layout.js"></script>
+  <script src="js/common/store.js"></script>
+  <script src="js/common/mock.js"></script>
+  <script src="js/common/audio.js"></script>
+  <script src="js/pages/mixdown.js"></script>
+</body>
+</html>

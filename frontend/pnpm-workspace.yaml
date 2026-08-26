@@ -1,0 +1,11 @@
+packages:
+  - '.'
+
+# pnpm 11 设置（仅认证/registry 走 .npmrc，其余一律在此配置）
+# 沙箱环境下缓存写入项目本地目录（默认在 AppData，受限制）
+cacheDir: .pnpm-cache
+# 跳过 pnpm run 前的依赖状态校验（避免每次触发 install）
+verifyDepsBeforeRun: false
+# 允许执行的依赖构建脚本
+allowBuilds:
+  esbuild: true

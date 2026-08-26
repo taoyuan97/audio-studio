@@ -1,0 +1,195 @@
+/* ============================================================
+   AI 音频工作台 · 全局样式（暗色专业工具风，tokens 迁移自原型）
+   ============================================================ */
+
+:root {
+  --bg: #0d1017;
+  --bg-soft: #11151f;
+  --panel: #161b26;
+  --panel-2: #1b2130;
+  --border: #262e40;
+  --border-soft: #1f2636;
+  --text: #e8ebf3;
+  --text-2: #a9b2c7;
+  --text-3: #6b7488;
+  --accent: #6f8cff;
+  --accent-strong: #8aa2ff;
+  --accent-soft: rgba(111, 140, 255, 0.14);
+  --teal: #2cc9a7;
+  --teal-soft: rgba(44, 201, 167, 0.14);
+  --purple: #b28cff;
+  --purple-soft: rgba(178, 140, 255, 0.14);
+  --blue: #5aa9e6;
+  --blue-soft: rgba(90, 169, 230, 0.14);
+  --amber: #e6b25a;
+  --amber-soft: rgba(230, 178, 90, 0.16);
+  --red: #e0635c;
+  --red-soft: rgba(224, 99, 92, 0.14);
+  --radius: 12px;
+  --radius-s: 8px;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  --mono: "Cascadia Code", Consolas, "Courier New", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(111, 140, 255, 0.06), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(44, 201, 167, 0.05), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3247;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------------- 全局提示横幅 ---------------- */
+
+.status-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* ---------------- 侧边栏品牌区 ---------------- */
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+}
+
+.app-brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 15px;
+}
+
+.app-brand-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-3);
+  letter-spacing: 2px;
+  font-weight: 400;
+}
+
+/* ---------------- 专注模式布局（冥想工作台） ---------------- */
+
+.focus-layout {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.focus-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border-soft);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.focus-content {
+  flex: 1;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* ---------------- 时长气泡选择 ---------------- */
+
+.duration-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.duration-trigger:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.duration-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.duration-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 96px;
+}
+
+.duration-option {
+  padding: 7px 12px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.duration-option:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.duration-option.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
