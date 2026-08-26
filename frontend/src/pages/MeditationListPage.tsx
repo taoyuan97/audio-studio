@@ -141,7 +141,7 @@ export default function MeditationListPage() {
           }
         }}
         onCancel={() => setRenaming(null)}
-        destroyOnClose
+        destroyOnHidden
       >
         <Input
           value={renameValue}
