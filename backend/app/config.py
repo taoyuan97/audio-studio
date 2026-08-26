@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     dashscope_model_id: str = "qwen-plus"
     moonshot_model_id: str = "kimi-k2-0905-preview"
 
+    # 阿里云 TTS（与通义千问 LLM 配置隔离）
+    aliyun_tts_api_key: str = ""
+    aliyun_tts_model_id: str = "qwen-audio-3.0-tts-plus"
+
     # 火山引擎 TTS
     volc_tts_app_id: str = ""
     volc_tts_access_token: str = ""
@@ -43,6 +47,7 @@ class Settings(BaseSettings):
         "deepseek_model_id",
         "dashscope_model_id",
         "moonshot_model_id",
+        "aliyun_tts_model_id",
         mode="before",
     )
     @classmethod

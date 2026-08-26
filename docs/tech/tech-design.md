@@ -2,9 +2,11 @@
 
 ## 1. 文档信息
 
-- 版本：v1.3
-- 状态：设计已确认、部分实施（T001/T002/T003 已完成；T004–T008 待实施）
+- 版本：v1.5
+- 状态：设计已确认、部分实施（T001–T003 已完成；T004 阿里云技术验收通过、火山延期；T005–T008 待实施）
 - 创建日期：2026-08-26
+- 变更记录：v1.5 记录阿里云真实验证结果：`qwen-audio-3.0-tts-plus` instruction=true、SSML=false、pitch=false，停顿改走本地静音；FFmpeg 9.0.1 安装并修复 Windows `ffprobe.exe` 同目录探测；火山鉴权验证延期
+- 变更记录：v1.4 阿里云 TTS 与通义千问 LLM 配置隔离：新增 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，禁止 TTS 回退读取 `DASHSCOPE_*`；设置状态展示 TTS 实际模型 ID
 - 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
 - 变更记录：v1.2 API 契约与数据模型拆分为独立文档（`api-contract.md` / `data-model.md`，实现级单一事实源），本文 5.2/5.4 改为摘要概览
 - 变更记录：v1.1 吸收 meditation-guide-studio（`C:\projects\apps\meditation-guide-studio`）已验证实现——TTS 双引擎接入代码移植、情绪 instruction 映射定论、SSML break/静音切分双策略、音频落盘原子化规范、run 进度持久化、MiniMax 同步接口修正（E1）与计费安全重试（E8）、48kHz 基准（E2）、呼吸停顿 4s/5s（E4）
@@ -74,7 +76,7 @@
 | 任务并发（C3） | 全局单任务串行队列（FIFO），队列上限 8 → 超出 409 `RUN_QUEUE_FULL` |
 | 数据模型（A4 修订） | conversations/messages/runs/artifacts + script_drafts + artifact_versions；会话至多一个逻辑脚本产物，AI/编辑写草稿，用户手动追加版本 |
 | 存储（B1） | 本地 `data/audio/` 音频文件（StaticFiles 托管）+ SQLite 单库；放弃 OSS |
-| TTS（B2） | 统一 `TTSProvider` 接口，阿里云 DashScope + 火山引擎双适配；接入代码移植自 meditation-guide-studio（已验证） |
+| TTS（B2） | 统一 `TTSProvider` 接口，阿里云 DashScope + 火山引擎双适配；阿里云真实链路已验证，火山待官方鉴权说明后验证 |
 | 情绪标记（B3/E7） | 阿里云 `qwen-audio-3.0-tts-plus` 为默认模型，`[情绪:x]` → instruction 直传（已验证支持）；火山按 `TTSCapabilities` 能力声明降级为普通朗读；不引入 sambert 旧模型分支 |
 | BGM（B4/E1） | MiniMax Music **同步接口**（`music_generation`，单次调用返回 `audio_url`，长超时 10min）：调用 → SSE 等待心跳 → 即下即存；失败不自动重试，重试区分「重新下载/重新生成」（E8） |
 | 混音（B5） | 本地 FFmpeg（Windows 安装），Python 子进程封装；闪避仅模式 B（sidechaincompress），模式 A 删除 |
@@ -207,9 +209,10 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 ### 5.6 TTS 线设计
 
 - **`app/tts/providers.py`**：`TTSProvider` 统一接口——`synthesize(text, {voice, speed, pitch, emotion}) -> WAV bytes`；实现**移植自 meditation-guide-studio（已验证代码）**：
-  - `AliyunTTSProvider`：Qwen-TTS（默认 `qwen-audio-3.0-tts-plus`）走 `/services/audio/tts/SpeechSynthesizer`，payload 含 `sample_rate/volume/rate/pitch/instruction/enable_ssml`，Bearer 鉴权，SSE 响应流式解析（逐行 `data:` → JSON event → 拼 `output.audio.data`）。不移植 sambert 旧分支（E7）。
+  - `AliyunTTSProvider`：Qwen-TTS 只读取独立的 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`（默认 `qwen-audio-3.0-tts-plus`），不得回退读取千问 LLM 的 `DASHSCOPE_*`；走 `/services/audio/tts/SpeechSynthesizer`，payload 含 `sample_rate/volume/rate/pitch/instruction/enable_ssml`，Bearer 鉴权，SSE 响应流式解析（逐行 `data:` → JSON event → 拼 `output.audio.data`）。不移植 sambert 旧分支（E7）。
   - `VolcTTSProvider`：`openspeech.bytedance.com` —— HMAC 签名换 access token（带缓存与过期刷新）→ HTTP 合成（`voice_type/speed_ratio/volume_ratio`），二进制 frame 解码。
 - **`app/tts/capabilities.py`**：`TTSCapabilities` 能力声明（移植）——按 provider/model/voice 声明是否支持 instruction/SSML/pitch、SSML 最大停顿毫秒数、音色白名单；提交与合成计划构建时校验，不支持项自动降级。
+- 默认 `qwen-audio-3.0-tts-plus` 真实验证能力：`supports_instruction=true`、`supports_ssml=false`、`supports_pitch=false`。向该模型发送 `enable_ssml + <break>` 会返回 `ret=416`，因此 `[停顿 Ns]` 必须切本地静音；前端音调滑块置灰。计划层仍保留未来 SSML 模型的 break 策略。
 - **标记 → 合成计划（B3 定论）**：`markers.py` 解析结果 → 合成计划，停顿**双策略**：
   - 支持_SSML 的引擎：`[停顿 Ns]` → `<break time="Nms"/>` 内嵌文本交引擎渲染（自然停顿）；超过能力声明最大停顿毫秒数 → 切为独立静音段；
   - 不支持 SSML / 超长停顿：文本切分 + 独立静音段拼接。
@@ -249,7 +252,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 
 ### 5.9 设置线设计
 
-- `GET /api/settings/status`：各 provider 是否已配置（Key 存在性 + 掩码预览，如 `sk-***abc`；LLM 同时返回只读实际 model_id）、ffmpeg/ffprobe 版本与可用性、FAKE_MODE 状态。
+- `GET /api/settings/status`：各 provider 是否已配置（Key 存在性 + 掩码预览，如 `sk-***abc`；LLM 与阿里云 TTS 同时返回只读实际 model_id）、ffmpeg/ffprobe 版本与可用性、FAKE_MODE 状态。
 - `POST /api/settings/probe/{provider}`：轻量真实探测——llm（列模型/一次补全）、aliyun_tts / volc_tts（合成一句短音频即弃）、minimax（余额或提交探测）、ffmpeg（版本）。返回 `{ok, latency_ms, message}`。
 - Key 只读：编辑须改 `.env` 并重启，设置页文案说明。
 
@@ -258,11 +261,15 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 ```dotenv
 # LLM（剧本生成）
 DEEPSEEK_API_KEY=
-DASHSCOPE_API_KEY=          # 千问 LLM 与阿里云 TTS 共用
+DASHSCOPE_API_KEY=          # 仅用于通义千问 LLM
 MOONSHOT_API_KEY=           # Kimi（api.moonshot.cn）
 DEEPSEEK_MODEL_ID=deepseek-chat
 DASHSCOPE_MODEL_ID=qwen-plus
 MOONSHOT_MODEL_ID=kimi-k2-0905-preview
+
+# 阿里云 TTS（与通义千问 LLM 配置隔离，不做 DASHSCOPE_* 回退）
+ALIYUN_TTS_API_KEY=
+ALIYUN_TTS_MODEL_ID=qwen-audio-3.0-tts-plus
 
 # 火山引擎 TTS
 VOLC_TTS_APP_ID=
@@ -363,7 +370,7 @@ cd frontend && pnpm test        # Vitest
 cd frontend && pnpm e2e         # Playwright（需后端运行，FAKE_MODE=true）
 
 # 真实服务探针（实施期一次性验证）
-uv run python scripts/smoke_tts.py    # 双引擎连通（情绪支持度已由 meditation-guide-studio 验证）
+uv run python scripts/smoke_tts.py --yes    # 双引擎真实连通（会产生少量调用费用）
 uv run python scripts/smoke_llm.py
 uv run python scripts/smoke_music.py  # MiniMax 同步调用 + 下载
 ```
@@ -393,7 +400,7 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 | 风险 | 对策 |
 |---|---|
-| TTS 双引擎接入与情绪标记 | **已消除**：接入代码与 Qwen instruction 支持度均经 meditation-guide-studio 验证，移植即用；火山降级路径由能力声明兜底 |
+| TTS 双引擎接入与情绪标记 | **部分消除**：阿里云真实 smoke、instruction、WAV/MP3、缓存与产物链路已验证；默认模型 SSML/pitch 已按真实结果关闭。火山鉴权形态缺少官方说明，真实验证延期 |
 | MiniMax 同步调用超时/失败 | 长超时 10min + 分类错误码 + 等待心跳可取消；失败不自动重试（防重复计费），URL 落库支持免计费重新下载（E8） |
 | 移植代码与新架构（run 队列/SSE）水土不服 | Provider 层保持纯函数式（输入参数 → 音频 bytes/URL），与 run 框架解耦；契约测试锁定行为 |
 | FFmpeg 滤镜链（sidechaincompress/aloop）调参 | 契约测试锁参数拼装；实施期用固定样本音频人耳验收 ducking/循环/截断三态 |

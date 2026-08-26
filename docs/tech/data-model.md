@@ -195,8 +195,8 @@ CREATE TABLE artifact_versions (
   "scene": "meditation",                  // 'meditation' | 'podcast'（来源脚本自动判定或用户选择）
   "engine": "aliyun",                     // 'aliyun' | 'volc'
   "model": "qwen-audio-3.0-tts-plus",     // 引擎内模型
-  "voice_id": "loongstella",
-  "voice_name": "龙婉",
+  "voice_id": "longanlingxin",
+  "voice_name": "龙安聆心",
   "speed": 0.8,                           // 0.5–1.5
   "pitch": null,                          // 引擎支持时 -12~12（半音），否则 null
   "script_artifact_id": "art_...",        // 来源脚本产物；裸文本提交时 null

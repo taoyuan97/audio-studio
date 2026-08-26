@@ -369,13 +369,27 @@ class Repository:
 
     # ---------------- runs ----------------
 
-    def create_run(self, kind: str, conversation_id: str | None = None) -> dict[str, Any]:
+    def create_run(
+        self,
+        kind: str,
+        conversation_id: str | None = None,
+        *,
+        result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         run_id = new_id("run")
         with self.transaction() as connection:
             connection.execute(
-                """INSERT INTO runs (id, kind, conversation_id, status, created_at)
-                   VALUES (?,?,?,?,?)""",
-                (run_id, kind, conversation_id, "queued", now_ms()),
+                """INSERT INTO runs
+                   (id, kind, conversation_id, status, result_json, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (
+                    run_id,
+                    kind,
+                    conversation_id,
+                    "queued",
+                    json.dumps(result, ensure_ascii=False) if result is not None else None,
+                    now_ms(),
+                ),
             )
         return self.get_run(run_id)
 
@@ -464,6 +478,18 @@ class Repository:
                    WHERE conversation_id=? AND status IN ('queued','running')
                    ORDER BY created_at DESC LIMIT 1""",
                 (conversation_id,),
+            ).fetchone()
+        return row["id"] if row else None
+
+    def active_run_for_request(self, kind: str, request_payload: dict[str, Any]) -> str | None:
+        """查找同类、同请求快照的活动任务，避免重复计费提交。"""
+        encoded = json.dumps({"request": request_payload}, ensure_ascii=False)
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT id FROM runs
+                   WHERE kind=? AND status IN ('queued','running') AND result_json=?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (kind, encoded),
             ).fetchone()
         return row["id"] if row else None
 
@@ -727,6 +753,7 @@ class Repository:
     def insert_artifact(
         self,
         *,
+        artifact_id: str | None = None,
         type: str,
         name: str,
         conversation_id: str | None = None,
@@ -737,7 +764,7 @@ class Repository:
         audio_format: str | None = None,
         duration: float | None = None,
     ) -> dict[str, Any]:
-        artifact_id = new_id("art")
+        artifact_id = artifact_id or new_id("art")
         timestamp = now_ms()
         with self.transaction() as connection:
             connection.execute(

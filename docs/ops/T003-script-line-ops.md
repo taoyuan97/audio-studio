@@ -17,7 +17,7 @@
 
 注意事项：
 
-- `DASHSCOPE_API_KEY` 与后续任务的阿里云 TTS 共用同一个 Key（见 `.env.example` 注释）。
+- `DASHSCOPE_API_KEY` 仅供通义千问 LLM 使用；阿里云 TTS 使用独立的 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，两条链路禁止配置回退。
 - 三家 Key 均可只配其中一或多家；**前端模型下拉只展示已配置 Key 的模型**，未配置的不出现在下拉中。
 - 三家模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 设置，必须非空且互不重复；模型下拉只显示实际模型 ID。
 - 真实模式下零 Key 时模型下拉为空、发送禁用（提示配置 Key）；`FAKE_MODE=true` 时下拉展示全部三家（无需任何 Key）。

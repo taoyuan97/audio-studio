@@ -2,9 +2,11 @@
 
 ## 1. 文档信息
 
-- 版本：v1.3
+- 版本：v1.5
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v1.5 按阿里云真实验证修正默认 Qwen-TTS 能力：instruction=true、SSML=false、pitch=false；T004 状态改为阿里云技术验收通过、火山延期
+- 变更记录：v1.4 阿里云 TTS 改用独立 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，defaults 与 settings status 暴露实际 TTS 模型 ID
 - 变更记录：v1.3 增加章节实施状态矩阵，校准 health 版本示例；纳入脚本草稿/版本、六档时长与可配置模型 ID 契约
 - 变更记录：v1.1 将 4.8 models 响应改为仅含可用模型并新增 Kimi 注册项
 - 关联文档：`docs/tech/tech-design.md`（总体设计）、`docs/tech/data-model.md`（数据模型）
@@ -20,11 +22,11 @@
 | 第 4 节 | 冥想会话、消息、模型、草稿与版本保存 | 已实现 | T003 |
 | 第 5 节 | run 查询、SSE、取消 | 已实现 | T002 |
 | 第 6 节 | artifacts 基座、音频/peaks、脚本版本查看与恢复 | 已实现（T002 基座 + T003 扩展） | T002/T003 |
-| 第 7 节 | TTS | 仅确认设计，端点尚未实现 | T004 |
+| 第 7 节 | TTS | 已实现；阿里云技术验收通过，火山延期 | T004 |
 | 第 8 节 | BGM | 仅确认设计，端点尚未实现 | T005 |
 | 第 9 节 | 混音 | 仅确认设计，端点尚未实现 | T006 |
 | 第 10 节 | 设置状态与探测 | 仅确认设计，端点尚未实现 | T007 |
-| 第 11 节 | 通用 run 与剧本事件已实现；TTS/BGM/混音事件待实现 | 部分实现 | T002–T006 |
+| 第 11 节 | 通用 run、剧本与 TTS 事件已实现；BGM/混音事件待实现 | 部分实现 | T002–T006 |
 | 第 12 节 | 错误码目标全集；随对应业务任务逐步实现 | 部分实现 | T002–T007 |
 
 `POST /api/demo/jobs` 与 `kind=demo` 是 T002 队列/SSE 内部联调入口，不属于正式业务契约，后续业务不得依赖。
@@ -283,7 +285,7 @@ SSE 事件流（协议见第 11 节）。
   "name": "深海放松·人声",
   "conversation_id": "conv_...",
   "source_run_id": "run_...",
-  "params": { "scene": "meditation", "engine": "aliyun", "model": "qwen-audio-3.0-tts-plus", "voice_id": "loongstella", "voice_name": "龙婉", "speed": 0.8, "pitch": null, "script_artifact_id": "art_...", "format": "mp3" },
+  "params": { "scene": "meditation", "engine": "aliyun", "model": "qwen-audio-3.0-tts-plus", "voice_id": "longanlingxin", "voice_name": "龙安聆心", "speed": 0.8, "pitch": null, "script_artifact_id": "art_...", "format": "mp3" },
   "content": null,
   "audio": { "format": "mp3", "duration": 301.5, "url": "/api/artifacts/art_.../audio", "peaks_url": "/api/artifacts/art_.../peaks" },
   "created_at": 1724660000000,
@@ -361,12 +363,12 @@ SSE 事件流（协议见第 11 节）。
       "id": "aliyun",
       "name": "阿里云",
       "model": "qwen-audio-3.0-tts-plus",
-      "supports_ssml": true,
+      "supports_ssml": false,
       "supports_instruction": true,
-      "max_ssml_pause_ms": 10000,
-      "supports_pitch": true,
+      "max_ssml_pause_ms": 0,
+      "supports_pitch": false,
       "voices": [
-        { "id": "loongstella", "name": "龙婉", "tags": ["温柔", "女声"], "recommended_scene": "meditation" }
+        { "id": "longanlingxin", "name": "龙安聆心", "tags": ["温柔", "女声"], "recommended_scene": "meditation" }
       ]
     },
     {
@@ -383,12 +385,14 @@ SSE 事件流（协议见第 11 节）。
     }
   ],
   "scene_presets": {
-    "meditation": { "speed": 0.8, "recommended_voice_ids": ["loongstella"], "note": "偏慢语速，温柔系音色" },
+    "meditation": { "speed": 0.8, "recommended_voice_ids": ["longanlingxin"], "note": "偏慢语速，温柔系音色" },
     "podcast": { "speed": 1.0, "recommended_voice_ids": [], "note": "正常语速，自然讲述" }
   }
 }
 ```
 
+- 阿里云引擎的 `model` 来自 `ALIYUN_TTS_MODEL_ID`（默认 `qwen-audio-3.0-tts-plus`）；Provider 只读取 `ALIYUN_TTS_*`，不回退读取千问 LLM 的 `DASHSCOPE_*`。
+- 默认 `qwen-audio-3.0-tts-plus` 经真实调用确认不接受 SSML `<break>`（服务端 `ret=416`）且 pitch 未验证支持，因此 defaults 声明两者为 false；停顿切本地静音，前端音调滑块置灰。instruction 已真实验证可用。
 - 能力字段即 `TTSCapabilities`（B3 降级依据）：前端可据此展示"该引擎不支持情绪指令/音调"提示。
 
 ### 7.2 GET /api/tts/voices/{engine}/{voice}/preview
@@ -410,7 +414,7 @@ SSE 事件流（协议见第 11 节）。
   "text": null,
   "scene": "meditation",
   "engine": "aliyun",
-  "voice_id": "loongstella",
+  "voice_id": "longanlingxin",
   "speed": 0.8,
   "pitch": null,
   "format": "mp3"
@@ -508,7 +512,7 @@ SSE 事件流（协议见第 11 节）。
     "llm_deepseek": { "configured": true, "key_masked": "sk-***cdef", "model_id": "deepseek-chat" },
     "llm_qwen": { "configured": true, "key_masked": "sk-***ab12", "model_id": "qwen-plus" },
     "llm_moonshot": { "configured": false, "key_masked": null, "model_id": "kimi-k2-0905-preview" },
-    "tts_aliyun": { "configured": true, "key_masked": "sk-***9x8y" },
+    "tts_aliyun": { "configured": true, "key_masked": "sk-***9x8y", "model_id": "qwen-audio-3.0-tts-plus" },
     "tts_volc": { "configured": false, "key_masked": null },
     "minimax": { "configured": true, "key_masked": "eyJ***jk4" }
   },
@@ -522,6 +526,7 @@ SSE 事件流（协议见第 11 节）。
 连通性测试（真实轻量探测）。
 
 - `provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | aliyun_tts | volc_tts | minimax | ffmpeg`。
+- `aliyun_tts` 的配置状态与探测只使用 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`；未配置独立 TTS Key 时，即使 `DASHSCOPE_API_KEY` 已配置也返回未配置。
 - 响应 200（探测本身 200，结果在体内）：
 
 ```json

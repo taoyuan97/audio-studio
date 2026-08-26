@@ -24,6 +24,7 @@ from .demo import demo_handler, router as demo_router
 from .errors import ApiError, api_error_handler, http_error_handler
 from .llm.registry import ModelRegistry
 from .runs import TERMINAL_EVENTS, RunManager
+from .tts.routes import make_tts_handler, router as tts_router
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,9 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
         manager.register(
             "script", make_script_handler(repository, resolved_settings, llm_registry)
         )
+        manager.register(
+            "tts", make_tts_handler(repository, resolved_settings, audio_dir)
+        )
         await manager.start()
         application.state.settings = resolved_settings
         application.state.repository = repository
@@ -112,6 +116,7 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
     application.include_router(artifacts_router)
     application.include_router(conversations_router)
     application.include_router(demo_router)
+    application.include_router(tts_router)
 
     # ---------------- 通用端点 ----------------
 

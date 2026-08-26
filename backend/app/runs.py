@@ -110,14 +110,20 @@ class RunManager:
 
     # ---------------- 提交与查询 ----------------
 
-    async def enqueue(self, kind: str, conversation_id: str | None = None) -> dict[str, Any]:
+    async def enqueue(
+        self,
+        kind: str,
+        conversation_id: str | None = None,
+        *,
+        result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if kind not in self._handlers:
             raise ApiError("RUN_KIND_UNKNOWN", f"未知任务类型: {kind}", 422)
         if self.repo.count_queued_runs() >= self.max_pending:
             raise ApiError(
                 "RUN_QUEUE_FULL", f"任务队列已满（上限 {self.max_pending}），请稍后再试", 409
             )
-        run = self.repo.create_run(kind, conversation_id)
+        run = self.repo.create_run(kind, conversation_id, result=result)
         await self._queue.put(run["id"])
         return run
 

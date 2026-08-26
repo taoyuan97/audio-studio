@@ -25,9 +25,12 @@ def find_ffmpeg(ffmpeg_path: str = "") -> str | None:
 
 def find_ffprobe(ffmpeg_path: str = "") -> str | None:
     if ffmpeg_path:
-        probe = Path(ffmpeg_path).with_name("ffprobe")
-        if probe.is_file():
-            return str(probe)
+        configured = Path(ffmpeg_path)
+        # 显式配置 ffmpeg.exe 时，Windows 同目录探针也必须保留 .exe；
+        # Linux/macOS 的无扩展名配置仍拼为 ffprobe。
+        sibling = configured.with_name(f"ffprobe{configured.suffix}")
+        if sibling.is_file():
+            return str(sibling)
     resolved = shutil.which("ffprobe")
     return str(resolved) if resolved else None
 

@@ -312,6 +312,7 @@ export interface SubmitMixdownJobRequest {
 export interface ProviderStatus {
   configured: boolean
   key_masked: string | null
+  model_id?: string
 }
 
 /** GET /api/settings/status */

@@ -307,6 +307,7 @@ export default function MeditationWorkspacePage() {
       setScriptName('')
       queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
       queryClient.invalidateQueries({ queryKey: ['script-versions', result.artifact.id] })
+      queryClient.invalidateQueries({ queryKey: ['artifacts'] })
       message.success(`已保存为 v${result.version.version_no}`)
       if (sendAfterSave) {
         setSendAfterSave(false)
@@ -356,7 +357,7 @@ export default function MeditationWorkspacePage() {
   const handleSaveVersion = (continueAfterSave = false) => {
     setSendAfterSave(continueAfterSave)
     if (!artifact) {
-      setScriptName('')
+      setScriptName(`${conversation?.title ?? '未命名冥想'}·脚本`)
       setSaveNameOpen(true)
       return
     }

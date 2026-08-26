@@ -2,15 +2,19 @@
 
 ## 1. 任务信息
 
-- 状态：待开始
+- 状态：阿里云 TTS 验收通过；火山延期（待官方鉴权说明）
 - 优先级：P0
 - 类型：正式任务 4/8
 - 前置任务：T003（脚本产物输入）
 - 后续任务：T006（voice 产物作为混音输入）
 - 目标目录：`backend/app/tts/`、`backend/app/tts.py`、`frontend/src/features/tts/`、`frontend/src/components/AudioPlayer/`
 - 创建日期：2026-08-26
-- 关联文档：`docs/prd/prd.md`（5.2）、`docs/tech/tech-design.md`（5.6）、`docs/tech/api-contract.md`（第 7 节）、`docs/tech/data-model.md`（5.2）
+- 关联文档：`docs/prd/prd.md`（5.2）、`docs/tech/tech-design.md`（5.6）、`docs/tech/api-contract.md`（第 7 节）、`docs/tech/data-model.md`（5.2）、`docs/ops/T004-tts-line-ops.md`（人工配置与验收）
 - 移植来源：`C:\projects\apps\meditation-guide-studio\backend\app\services\{tts_aliyun,tts_volcano,tts_capabilities}.py`、`render_plan_service.py`（ALIYUN_VOICES）
+- 配置决策：阿里云 TTS 与通义千问 LLM 配置彻底隔离；TTS 仅使用 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，不得回退读取 `DASHSCOPE_*`
+- 验证记录（2026-08-26）：阿里云真实 smoke、试听缓存、带标记 WAV、MP3 320k、Range/peaks 均通过；真实验证确认默认 `qwen-audio-3.0-tts-plus` 能力为 instruction=true、SSML=false、pitch=false
+- 人工验收（2026-08-26）：阿里云 TTS 的 MP3、WAV 均可正常生成和试听，音质、instruction 听感及分段拼接符合验收预期
+- 延期决策：火山 TTS 暂不验证，待取得官方鉴权配置说明后单独恢复，不阻塞阿里云单引擎里程碑
 
 ## 2. 目标
 
@@ -19,7 +23,7 @@
 ## 3. 行为基线（继承原型 tts 页语义 + 决策 B2/B3/E2/E4/E7）
 
 - 交互同原型：脚本来源下拉（产物库脚本 + 粘贴兜底）、场景联动预设（冥想 0.8x/播客 1.0x + 推荐音色高亮）、引擎切换联动音色、音色试听、语速/音调滑块、合成进度、结果播放 + 波形。
-- 标记处理承诺（PRD 5.2）：`[停顿 Ns]` SSML break 优先（超长切静音）；`[吸气]`4s/`[呼气]`5s；`[情绪:x]` 阿里云 instruction 直传、火山降级普通朗读；`[语速:x]` 分段 rate；标记不朗读出口。
+- 标记处理承诺（PRD 5.2）：能力声明支持 SSML 时 `[停顿 Ns]` 优先 break（超长切静音）；默认阿里云 Qwen 与火山均不支持 SSML，因此切本地静音；`[吸气]`4s/`[呼气]`5s；`[情绪:x]` 阿里云 instruction 直传、火山降级普通朗读；`[语速:x]` 分段 rate；标记不朗读出口。
 - 全链路 48kHz；MP3 320k / WAV 16bit（E2/E3）。
 - 试听按「引擎+音色」缓存，重复试听不重复计费。
 - 完成自动入库（params 完整快照含来源脚本 id）。
@@ -31,8 +35,8 @@
 **后端（Provider 层移植 + 适配）**
 
 - `app/tts/providers.py`：
-  - `AliyunTTSProvider`（移植 tts_aliyun.py）：`/services/audio/tts/SpeechSynthesizer`，payload 含 sample_rate/volume/rate/pitch/instruction/enable_ssml，Bearer 鉴权，SSE 响应流式解析拼接音频；仅 Qwen 分支（不移植 sambert，E7）。
-  - `VolcTTSProvider`（移植 tts_volcano.py）：HMAC 签名换 access token（缓存+过期刷新）→ 合成 API，二进制 frame 解码。
+  - `AliyunTTSProvider`（移植 tts_aliyun.py）：只从 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID` 初始化（默认模型 `qwen-audio-3.0-tts-plus`，不回退 `DASHSCOPE_*`）；调用 `/services/audio/tts/SpeechSynthesizer`，payload 含 sample_rate/volume/rate/pitch/instruction/enable_ssml，Bearer 鉴权，SSE 响应流式解析拼接音频；仅 Qwen 分支（不移植 sambert，E7）。默认模型真实验证仅开启 instruction，SSML/pitch 由能力声明关闭。
+  - `VolcTTSProvider`：当前按 `VOLC_TTS_APP_ID` + 最终 `VOLC_TTS_ACCESS_TOKEN` 直连合成 API、解码二进制 frame；官方鉴权配置说明未确认，真实验证延期。若实际凭证需要 HMAC 换 token，恢复任务时调整 Provider 与环境变量。
   - 统一接口 `synthesize(text, {voice, speed, pitch, emotion, ssml_breaks}) -> WAV bytes`；返回采样率/声道元信息供拼接校验。
 - `app/tts/capabilities.py`（移植 tts_capabilities.py）：按 provider/model/voice 声明 supports_ssml/instruction/pitch、max_ssml_pause_ms、音色白名单；提交与计划构建时校验降级。
 - `app/tts/voices.py`：官方音色硬编码表（阿里云参考移植 ALIYUN_VOICES + 火山官方列表；id/名称/风格标签/推荐场景）。
@@ -40,6 +44,7 @@
 - `app/tts.py`：defaults / preview（缓存）/ jobs 端点（api-contract.md 第 7 节）。
 - run handler：逐段合成（`tts.progress` + progress_json）→ 静音文件 + concat manifest 拼接（`.part` + `os.replace` 原子落盘，ffprobe 每步复验）→ 编码导出 → 建 voice 产物 → `run.completed`。
 - FAKE_MODE：`wave`+`struct` 生成分段正弦/静音 WAV（时长∝文本长度），走完整拼接与落盘路径。
+- `app/config.py` / `.env.example`：新增 `ALIYUN_TTS_API_KEY` 与 `ALIYUN_TTS_MODEL_ID`；Key 可空，模型 ID 默认 `qwen-audio-3.0-tts-plus` 且显式空值启动失败；不校验 TTS Key 与 LLM Key 的字符串是否相同。
 
 **前端**
 
@@ -67,16 +72,19 @@ Mutation: submitJob / cancel；事件: tts.progress→进度条；run.completed�
 
 ## 6. 测试
 
-- 自动化（pytest）：合成计划构建（SSML/切分双策略矩阵：短停顿/超长停顿/吸气呼气/情绪/语速/段超长切句）、能力降级（火山：SSML 关→全静音切分；instruction 关→情绪忽略）、Provider mock 单测（SSE 解析、token 刷新）、拼接管线（fake WAV：段序/静音时长/48k 一致性/原子落盘/失败清理）、契约端点与事件序列、试听缓存（二次请求不调 Provider）。
+- 自动化（pytest）：配置隔离（TTS 不读取 `DASHSCOPE_*`、TTS 模型非空校验）、合成计划构建（SSML/切分双策略矩阵：短停顿/超长停顿/吸气呼气/情绪/语速/段超长切句）、能力降级（火山：SSML 关→全静音切分；instruction 关→情绪忽略）、Provider mock 单测（SSE 解析、token 刷新）、拼接管线（fake WAV：段序/静音时长/48k 一致性/原子落盘/失败清理）、契约端点与事件序列、试听缓存（二次请求不调 Provider）。
 - 自动化（Vitest）：表单联动（引擎→音色、场景→预设）、AudioPlayer、提交/进度/结果状态机。
 - 手工（真实 Key）：smoke_tts.py 连通复核 + 短脚本真实合成试听。
 
 ## 7. 验收标准
 
-- [ ] 来源下拉/粘贴互斥；场景联动（语速默认、推荐音色高亮、说明文案）正确。
-- [ ] 引擎切换音色列表联动；不支持音调的引擎滑块置灰并提示。
-- [ ] 首次试听真实合成，二次试听秒回（缓存生效）。
-- [ ] FAKE_MODE 全流程：提交→分段进度→结果播放/波形/时长→产物入库（params 快照含来源脚本 id）。
-- [ ] 标记处理（以 fake 段时长断言）：停顿按秒、吸气 4s/呼气 5s、标记文本不出现在音频参数中。
-- [ ] 取消/失败路径正确，无半成品文件残留。
-- [ ] smoke_tts.py 真实双引擎连通通过；契约测试通过。
+- [x] 来源下拉/粘贴互斥；场景联动（语速默认、推荐音色高亮、说明文案）自动化测试通过。
+- [x] 引擎切换音色列表联动；不支持音调的引擎滑块置灰并提示。
+- [x] 阿里云首次试听真实合成，二次试听缓存命中（时间戳/哈希不变）。
+- [x] FAKE_MODE 全流程：提交→分段进度→结果播放/波形/时长→产物入库（params 快照含来源脚本 id）。
+- [x] 标记处理：停顿按秒、吸气 4s/呼气 5s、标记文本不进入 Provider 普通朗读文本。
+- [x] 取消/失败路径正确，自动化断言无 artifact 与 `.part` 半成品残留。
+- [x] 阿里云 `smoke_tts.py` 真实连通通过；WAV/MP3/Range/peaks 与契约测试通过。
+- [ ] 火山真实 smoke：延期，待官方鉴权说明。
+- [x] 阿里云 TTS 只读取独立的 `ALIYUN_TTS_*` 配置；defaults 与产物 params 返回/保存实际 TTS 模型 ID（设置状态端点归 T007）。
+- [x] 人工播放真实 WAV/MP3，确认音质、instruction 听感及拼接点无异常。

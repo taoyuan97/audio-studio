@@ -1,0 +1,26 @@
+.tts-page { width: 100%; max-width: 1280px; margin: 0 auto; }
+.tts-page-head { margin-bottom: 24px; }
+.tts-page-head h2 { margin: 0; color: var(--text); font-size: 24px; }
+.tts-page-head p { margin: 8px 0 0; color: var(--text-2); }
+.tts-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.tts-card { min-width: 0; border-color: var(--border); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18); }
+.tts-field { margin: 20px 0; }
+.tts-field > label { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--text-2); font-size: 13px; }
+.tts-field > label b { color: var(--accent-strong); font-family: var(--mono); font-weight: 500; }
+.tts-field small { display: block; margin-top: 7px; color: var(--text-3); }
+.tts-preview, .audio-player audio { width: 100%; margin-top: 10px; }
+.tts-script-option { display: flex; min-width: 0; flex-direction: column; gap: 2px; padding: 2px 0; }
+.tts-script-option strong { overflow: hidden; color: var(--text); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.tts-script-option span { overflow: hidden; color: var(--text-3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.tts-result-card .ant-card-body { min-height: 540px; display: flex; flex-direction: column; justify-content: center; }
+.tts-running, .tts-failure, .tts-result { display: flex; flex-direction: column; align-items: stretch; gap: 20px; }
+.tts-running { align-items: center; text-align: center; }
+.tts-running > .anticon { color: var(--purple); font-size: 54px; }
+.tts-running h3, .tts-running p { margin: 0; }
+.tts-running .ant-progress { width: min(420px, 100%); }
+.tts-result-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.waveform-view { height: 150px; display: flex; align-items: center; gap: 2px; padding: 16px; overflow: hidden; background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius-s); }
+.waveform-view i { min-width: 2px; flex: 1; background: linear-gradient(180deg, var(--purple), var(--accent)); border-radius: 2px; opacity: 0.82; }
+.audio-player { padding: 14px; background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius-s); }
+.audio-player-meta { display: flex; justify-content: space-between; gap: 16px; color: var(--text-2); font-size: 12px; }
+@media (max-width: 900px) { .tts-grid { grid-template-columns: 1fr; } .tts-result-card .ant-card-body { min-height: 360px; } }
