@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from .database import NotFoundError, Repository
 from .demo import demo_handler, router as demo_router
 from .errors import ApiError, api_error_handler, http_error_handler
 from .llm.registry import ModelRegistry
+from .music.routes import make_music_handler, router as music_router
 from .runs import TERMINAL_EVENTS, RunManager
 from .tts.routes import make_tts_handler, router as tts_router
 
@@ -74,6 +76,9 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
         manager.register(
             "tts", make_tts_handler(repository, resolved_settings, audio_dir)
         )
+        manager.register(
+            "music", make_music_handler(repository, resolved_settings, audio_dir)
+        )
         await manager.start()
         application.state.settings = resolved_settings
         application.state.repository = repository
@@ -117,6 +122,7 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
     application.include_router(conversations_router)
     application.include_router(demo_router)
     application.include_router(tts_router)
+    application.include_router(music_router)
 
     # ---------------- 通用端点 ----------------
 
@@ -147,6 +153,18 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
         error = None
         if run["status"] == "failed":
             error = {"code": run["error_code"], "message": run["error_message"]}
+        music_retry = None
+        if run["kind"] == "music" and run["status"] == "failed":
+            result = run.get("result") or {}
+            expires_at = result.get("expires_at")
+            music_retry = {
+                "download_available": bool(
+                    result.get("audio_url")
+                    and isinstance(expires_at, int)
+                    and expires_at > int(time.time() * 1000)
+                ),
+                "expires_at": expires_at if isinstance(expires_at, int) else None,
+            }
         return {
             "run_id": run["id"],
             "kind": run["kind"],
@@ -156,6 +174,7 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
             "progress": run["progress"],
             "artifact_id": run["artifact_id"],
             "error": error,
+            "music_retry": music_retry,
         }
 
     @application.post("/api/runs/{run_id}/cancel")

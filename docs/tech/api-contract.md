@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.5
+- 版本：v1.6
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v1.6 按 MiniMax Music 3.0 官方能力校准 T005：取消正式 style 枚举，以自由 prompt 为核心；structure_hints 为非确定性提示；补充 Provider 能力、24h URL 与脱敏 music_retry 契约
 - 变更记录：v1.5 按阿里云真实验证修正默认 Qwen-TTS 能力：instruction=true、SSML=false、pitch=false；T004 状态改为阿里云技术验收通过、火山延期
 - 变更记录：v1.4 阿里云 TTS 改用独立 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，defaults 与 settings status 暴露实际 TTS 模型 ID
 - 变更记录：v1.3 增加章节实施状态矩阵，校准 health 版本示例；纳入脚本草稿/版本、六档时长与可配置模型 ID 契约
@@ -23,10 +24,10 @@
 | 第 5 节 | run 查询、SSE、取消 | 已实现 | T002 |
 | 第 6 节 | artifacts 基座、音频/peaks、脚本版本查看与恢复 | 已实现（T002 基座 + T003 扩展） | T002/T003 |
 | 第 7 节 | TTS | 已实现；阿里云技术验收通过，火山延期 | T004 |
-| 第 8 节 | BGM | 仅确认设计，端点尚未实现 | T005 |
+| 第 8 节 | BGM | 已实现；真实 MiniMax smoke 因 Key/账号权限阻塞 | T005 |
 | 第 9 节 | 混音 | 仅确认设计，端点尚未实现 | T006 |
 | 第 10 节 | 设置状态与探测 | 仅确认设计，端点尚未实现 | T007 |
-| 第 11 节 | 通用 run、剧本与 TTS 事件已实现；BGM/混音事件待实现 | 部分实现 | T002–T006 |
+| 第 11 节 | 通用 run、剧本、TTS 与 BGM 事件已实现；混音事件待实现 | 部分实现 | T002–T006 |
 | 第 12 节 | 错误码目标全集；随对应业务任务逐步实现 | 部分实现 | T002–T007 |
 
 `POST /api/demo/jobs` 与 `kind=demo` 是 T002 队列/SSE 内部联调入口，不属于正式业务契约，后续业务不得依赖。
@@ -242,12 +243,14 @@
   "queue_position": 0,
   "progress": { "completed": 3, "total": 12, "stage": "synthesizing" },
   "artifact_id": null,
-  "error": null
+  "error": null,
+  "music_retry": null
 }
 ```
 
 - 终态示例：`status: "completed"` 时，script run 的 `artifact_id` 为 `null`，其他产物 run 非空；`failed` 时 `error: { "code": "...", "message": "..." }`。
 - 404：`RUN_NOT_FOUND`。
+- `music_retry`：仅 failed music run 返回 `{ "download_available": true, "expires_at": 1724663600000 }`；其他 run 为 `null`。不得返回远程签名 URL。
 
 ### 5.2 GET /api/runs/{run_id}/events
 
@@ -430,18 +433,25 @@ SSE 事件流（协议见第 11 节）。
 
 ### 8.1 GET /api/music/defaults
 
-风格预设与模型信息。
+当前 Provider、能力、Prompt 灵感示例与通用输入范围。灵感示例仅用于填充文本，不是可校验的风格枚举。
 
 - 响应 200：
 
 ```json
 {
-  "styles": [
-    { "id": "zen_gufeng", "name": "古风禅意", "description": "笛箫、古琴与空灵氛围" },
-    { "id": "heal_electronic", "name": "电子疗愈", "description": "柔和电子脉冲与pad" }
-  ],
-  "structures": ["intro", "build_up", "drop", "outro"],
+  "provider": "minimax",
   "model": "music-3.0",
+  "capabilities": {
+    "instrumental": true,
+    "prompt_max_length": 2000,
+    "native_duration": false,
+    "structure_control": "prompt_hint",
+    "remote_url": true
+  },
+  "prompt_suggestions": [
+    { "id": "zen", "label": "古琴与空灵氛围", "prompt": "空灵缓慢的冥想背景音乐，以古琴和柔和氛围音色为主，无明显鼓点，动态平稳" }
+  ],
+  "structure_hints": ["intro", "build_up", "drop", "outro"],
   "duration_range": { "min": 60, "max": 600 }
 }
 ```
@@ -453,10 +463,11 @@ SSE 事件流（协议见第 11 节）。
 - 请求：
 
 ```json
-{ "style": "zen_gufeng", "description": "笛子+电子氛围", "duration": 300, "structure": ["intro", "outro"], "format": "mp3" }
+{ "prompt": "笛箫与柔和电子氛围融合，节奏缓慢，动态平稳，适合冥想", "target_duration": 300, "structure_hints": ["intro", "outro"], "format": "mp3" }
 ```
 
-- `description` 可选（跨风格融合自由描述，原样拼入 prompt）；`duration` 60–600 秒；`structure` 元素 ∈ defaults.structures。
+- `prompt` 必填，去除首尾空白后长度 1–2000；`target_duration` 60–600 秒；`structure_hints` 元素 ∈ defaults.structure_hints、不可重复；`format` ∈ `mp3|wav`。
+- 请求保持 Provider 中立；MiniMax adapter 映射为纯音乐非流式 URL 请求。`structure_hints` 当前转写为 prompt 提示，不保证模型精确分段。
 - 响应 202：run 载荷（`kind: "music"`）。
 - 409/422：同 7.3（`MUSIC_PARAMS_INVALID`）。
 
@@ -470,7 +481,7 @@ SSE 事件流（协议见第 11 节）。
 { "mode": "download", "confirm_regenerate": null }
 ```
 
-- `mode=download`：run 失败但 `result_json.audio_url` 未过期 → 仅重新下载+后处理（免计费）；URL 缺失或过期 → 422 `MUSIC_URL_EXPIRED`（提示改用 regenerate）。
+- `mode=download`：run 失败但 `result_json.audio_url` 未过官方 24h 有效期 → 仅重新下载+后处理（免计费）；URL 缺失或过期 → 422 `MUSIC_URL_EXPIRED`（提示改用 regenerate）。
 - `mode=regenerate`：重新调用生成；必须携带 `confirm_regenerate: true`，否则 422 `MUSIC_REGENERATE_UNCONFIRMED`。
 - 响应 202：新 run 载荷（复用原参数，`source_run_id` 指向原 run）。
 - 仅 failed 状态的 music run 可重试 → 409 `RUN_NOT_RETRYABLE`。
@@ -592,10 +603,20 @@ SSE 事件流（协议见第 11 节）。
 | `TTS_RUN_ACTIVE` | 409 | 同参数任务运行中 | 展示运行中 |
 | `TTS_PROVIDER_ERROR` | 502 | 引擎调用失败（脱敏） | 失败卡片+重试 |
 | `MUSIC_PARAMS_INVALID` | 422 | BGM 参数非法 | 表单校验提示 |
+| `MUSIC_RUN_ACTIVE` | 409 | 相同参数的 BGM 任务正在运行 | 展示运行中 |
+| `MUSIC_AUTH_FAILED` | 502 | MiniMax API Key 无效 | 引导检查配置 |
+| `MUSIC_RATE_LIMITED` | 429 | MiniMax 限流 | 稍后手动重试 |
+| `MUSIC_ACCESS_DENIED` | 502 | 模型权限、余额或额度不足 | 引导检查账号 |
+| `MUSIC_CONTENT_REJECTED` | 422 | Prompt 未通过内容审核 | 修改 Prompt 后重新提交 |
+| `MUSIC_REQUEST_INVALID` | 422 | Provider 拒绝请求参数 | 检查 Prompt/模型配置 |
+| `MUSIC_NETWORK_ERROR` | 502 | 无法连接 MiniMax | 检查网络后重试 |
 | `MUSIC_URL_EXPIRED` | 422 | retry=download 但 URL 过期 | 引导改 regenerate |
 | `MUSIC_REGENERATE_UNCONFIRMED` | 422 | regenerate 未确认 | 弹二次确认 |
-| `MUSIC_PROVIDER_ERROR` | 502 | MiniMax 调用失败（分类：Key/限流/余额/审核/超时） | 失败卡片+两档重试 |
+| `MUSIC_PROVIDER_ERROR` | 502 | MiniMax 服务异常或响应异常 | 失败卡片+两档重试 |
 | `MUSIC_TIMEOUT` | 504 | 同步接口超时（10min） | 失败卡片+重试 |
+| `MUSIC_DOWNLOAD_FAILED` | 502 | 远程音频下载失败 | URL 有效时重新下载 |
+| `MUSIC_FFMPEG_MISSING` | 503 | BGM 后处理缺少 ffmpeg/ffprobe | 引导安装或配置 |
+| `MUSIC_PROCESSING_ERROR` | 500 | BGM 后处理或时长复验失败 | 失败卡片+两档重试 |
 | `MIX_INPUT_MISSING` | 422 | 双轨均空 | 表单校验提示 |
 | `MIX_INPUT_INVALID` | 422 | 轨道 id 不存在/类型错误 | 刷新下拉 |
 | `MIX_FFMPEG_MISSING` | 503 | ffmpeg/ffprobe 不可用 | 引导去设置页查看安装指引 |

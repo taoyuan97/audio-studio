@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.1
+- 版本：v1.2
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v1.2 校准 T005：BGM 以自由 prompt 取代 style 枚举，structure_hints 为非确定性提示；music result_json 保存请求快照、远程结果与重试来源
 - 变更记录：v1.1 增加 T003 的 `script_drafts`、`artifact_versions` 与 artifact 当前版本字段，并按实际实现将数据库访问方式校准为 sqlite3 同步短连接
 - 关联文档：`docs/tech/tech-design.md`（总体设计）、`docs/tech/api-contract.md`（API 契约）
 - 单一事实源：后端 `app/database.py`（DDL）、契约测试；前端 `types.ts` 按本文档映射
@@ -95,7 +96,13 @@ CREATE INDEX idx_runs_status ON runs(status, created_at ASC);
 `result_json`（music 线，E8）：
 
 ```json
-{ "audio_url": "https://...", "expires_at": 1724663600000, "request_id": "mm_..." }
+{
+  "request": { "prompt": "...", "target_duration": 300, "structure_hints": ["intro"], "format": "mp3" },
+  "audio_url": "https://...",
+  "expires_at": 1724663600000,
+  "request_id": "mm_...",
+  "source_run_id": null
+}
 ```
 
 > 生成成功即下载持久化，`audio_url` 仅供失败 run 的 `retry=download` 免计费重下载使用。
@@ -213,13 +220,13 @@ CREATE TABLE artifact_versions (
 
 ```json
 {
-  "style": "zen_gufeng",            // 预设风格 id
-  "style_name": "古风禅意",         // 展示名快照
-  "description": "笛子+电子氛围",    // 自由描述（可 null）
-  "duration": 300,                  // 目标时长（秒，60–600，后处理保证）
-  "structure": ["intro", "outro"],  // 段落结构（可空数组）
+  "provider": "minimax",           // 实际执行 Provider 快照
+  "model": "music-3.0",            // 实际模型快照
+  "prompt": "笛箫与柔和电子氛围融合，节奏缓慢，动态平稳", // 用户自由描述
+  "target_duration": 300,           // 目标时长（秒，60–600，后处理保证）
+  "structure_hints": ["intro", "outro"], // 非确定性结构提示（可空数组）
   "format": "mp3",                  // 导出格式
-  "model": "music-3.0"              // MiniMax 模型快照
+  "source_duration": 180.2           // Provider 源音频时长（可 null）
 }
 ```
 

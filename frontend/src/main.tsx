@@ -12,6 +12,7 @@ import { themeTokens } from './styles/theme'
 import './styles/global.css'
 import './styles/meditation.css'
 import './styles/tts.css'
+import './styles/bgm.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -1,0 +1,29 @@
+.bgm-page { width: 100%; max-width: 1280px; margin: 0 auto; }
+.bgm-page-head { margin-bottom: 24px; }
+.bgm-page-head h2 { margin: 0; color: var(--text); font-size: 24px; }
+.bgm-page-head p { margin: 8px 0 0; color: var(--text-2); }
+.bgm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+.bgm-card { min-width: 0; border-color: var(--border); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18); }
+.bgm-provider { display: flex; align-items: center; gap: 4px; margin-bottom: 14px; color: var(--text-3); font-size: 12px; }
+.bgm-provider span:last-child { margin-left: auto; }
+.bgm-suggestions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.bgm-suggestions small, .bgm-field small { color: var(--text-3); }
+.bgm-field { margin: 22px 0; }
+.bgm-field > label { display: flex; justify-content: space-between; margin-bottom: 9px; color: var(--text-2); font-size: 13px; }
+.bgm-field > label b { color: var(--accent-strong); font-family: var(--mono); font-weight: 500; }
+.bgm-field > label span { color: var(--text-3); font-size: 11px; }
+.bgm-field small { display: block; margin-top: 7px; }
+.bgm-result-card .ant-card-body { min-height: 570px; display: flex; flex-direction: column; justify-content: center; }
+.bgm-running, .bgm-failure, .bgm-result { display: flex; flex-direction: column; align-items: stretch; gap: 20px; }
+.bgm-running { align-items: center; text-align: center; }
+.bgm-running > .anticon { color: var(--purple); font-size: 54px; }
+.bgm-running h3, .bgm-running p, .bgm-summary p { margin: 0; }
+.bgm-running .ant-progress { width: min(420px, 100%); }
+.bgm-result-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.bgm-summary { padding: 13px; background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius-s); color: var(--text-2); }
+.bgm-summary strong { display: block; margin-bottom: 5px; color: var(--text); }
+.bgm-summary small { display: block; margin-top: 8px; color: var(--text-3); }
+.waveform-block { display: flex; flex-direction: column; gap: 5px; }
+.waveform-sections { display: flex; gap: 3px; }
+.waveform-sections span { flex: 1; padding: 4px 5px; overflow: hidden; border-top: 2px solid var(--purple); color: var(--text-3); font-size: 10px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) { .bgm-grid { grid-template-columns: 1fr; } .bgm-result-card .ant-card-body { min-height: 380px; } }

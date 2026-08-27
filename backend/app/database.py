@@ -483,15 +483,17 @@ class Repository:
 
     def active_run_for_request(self, kind: str, request_payload: dict[str, Any]) -> str | None:
         """查找同类、同请求快照的活动任务，避免重复计费提交。"""
-        encoded = json.dumps({"request": request_payload}, ensure_ascii=False)
         with self.connect() as connection:
-            row = connection.execute(
-                """SELECT id FROM runs
-                   WHERE kind=? AND status IN ('queued','running') AND result_json=?
-                   ORDER BY created_at DESC LIMIT 1""",
-                (kind, encoded),
-            ).fetchone()
-        return row["id"] if row else None
+            rows = connection.execute(
+                """SELECT id, result_json FROM runs
+                   WHERE kind=? AND status IN ('queued','running')
+                   ORDER BY created_at DESC""",
+                (kind,),
+            ).fetchall()
+        for row in rows:
+            if (_loads(row["result_json"]) or {}).get("request") == request_payload:
+                return row["id"]
+        return None
 
     @staticmethod
     def _run_dict(row: sqlite3.Row) -> dict[str, Any]:

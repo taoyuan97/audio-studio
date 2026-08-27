@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.5
-- 状态：设计已确认、部分实施（T001–T003 已完成；T004 阿里云技术验收通过、火山延期；T005–T008 待实施）
+- 版本：v1.6
+- 状态：设计已确认、部分实施（T001–T003 已完成；T004 阿里云技术验收通过、火山延期；T005 实现完成、真实 MiniMax smoke 因 Key/账号权限阻塞；T006–T008 待实施）
 - 创建日期：2026-08-26
+- 变更记录：v1.6 按 MiniMax Music 3.0 官方能力校准 T005：取消正式 style 枚举、自由 prompt 为核心、structure_hints 降级为非确定性提示，并引入 Provider 中立适配边界与脱敏重试能力
 - 变更记录：v1.5 记录阿里云真实验证结果：`qwen-audio-3.0-tts-plus` instruction=true、SSML=false、pitch=false，停顿改走本地静音；FFmpeg 9.0.1 安装并修复 Windows `ffprobe.exe` 同目录探测；火山鉴权验证延期
 - 变更记录：v1.4 阿里云 TTS 与通义千问 LLM 配置隔离：新增 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，禁止 TTS 回退读取 `DASHSCOPE_*`；设置状态展示 TTS 实际模型 ID
 - 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
@@ -225,14 +226,14 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 
 ### 5.7 BGM 线设计
 
-- **`app/music/minimax.py`**：MiniMax Music **同步接口**封装（E1，接口行为已由 meditation-guide-studio 验证）——单次 POST `/music_generation`（`model: music-3.0`，`output_format: url`，prompt 由 `style + description` 组装，含段落结构与时长指令），httpx 长超时 10min，响应含 `audio_url/request_id/时长/采样率`；**无 task_id 轮询**。
+- **`app/music/provider.py` + `app/music/minimax.py`**：通用层使用 `prompt/target_duration/structure_hints/format`；MiniMax adapter 才映射 `model: music-3.0`、`is_instrumental: true`、`lyrics_optimizer: false`、`stream: false`、`output_format: url`。同步单次 POST `/music_generation`，httpx 长超时 10min，响应含 `audio_url/request_id/时长/采样率`；**无 task_id 轮询**。
 - **错误分类（移植）**：API Key 无效 / 限流 / 余额权限 / 内容审核 / 超时 / 参数错误 / 服务不可用 → 分类映射 `MusicServiceError`，透出差异化错误码与文案。
 - **计费安全（E8，移植语义）**：生成失败**不自动重试**；`audio_url` 与 `expires_at` 落 `runs.result_json`——失败 run 的重试接口区分两档：
   - `retry=download`：URL 未过期 → 仅重新下载（免计费）；
   - `retry=regenerate`：无 URL 或已过期 → 重新调用生成（前端二次确认，`confirm_regenerate=true` 才放行）。
 - **下载与后处理**：httpx 流式下载远端音频 → 源文件落盘 → 后处理（移植 `music_postprocessor` 逻辑）：目标时长校验 → 短则 FFmpeg 循环拼接、长则裁剪 → 首尾 fade in/out → 按格式导出（MP3 320k / WAV 48kHz，E2/E3）→ ffprobe 复验最终时长 → 原子落盘入库。
 - 等待期 SSE 推 `music.progress`（`{phase: generating, waited_s}`，5s 心跳）；取消 = 中断等待/下载放弃结果（服务商侧计费可能已发生，文案说明）。
-- 风格预设卡片（后端 `GET /api/music/defaults` 下发）+ 自由描述融合指令原样拼入 prompt。
+- 自由 prompt 为核心输入，不存在正式 style 枚举；`GET /api/music/defaults` 可下发只负责填充文本的 prompt_suggestions。structure_hints 当前转成自然语言提示，不向纯音乐请求发送仅含结构标签的伪歌词，也不承诺精确分段。
 - `FAKE_MODE`：本地生成和弦占位音（`wave` 模块写 WAV，无额外依赖），后处理仍走真实 FFmpeg。
 
 ### 5.8 混音线设计（`app/ffmpeg.py` + `app/mixdown.py`）
@@ -425,4 +426,4 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 建议顺序：T001/T002 并行 → T003 → T004 → T005 → T006 → T007 → T008。B3 情绪支持度已由 meditation-guide-studio 验证，`smoke_tts.py` 仅作 T004 完工后的连通复核，不再阻塞开工。
 
-当前实施状态：T001、T002、T003 已完成；T004、T005、T006、T007、T008 待开始。任务状态以各 `docs/task/T*.md` 为准。
+当前实施状态：T001、T002、T003 已完成；T004 阿里云技术验收通过、火山延期；T005 实现完成、真实 MiniMax smoke 因 Key/账号权限阻塞（客服处理中）；T006、T007、T008 待开始。任务状态以各 `docs/task/T*.md` 为准。

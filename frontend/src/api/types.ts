@@ -38,6 +38,12 @@ export interface RunStatusResponse {
   progress: RunProgress | null
   artifact_id: string | null
   error: ApiErrorBody | null
+  music_retry: MusicRetryInfo | null
+}
+
+export interface MusicRetryInfo {
+  download_available: boolean
+  expires_at: number | null
 }
 
 export interface CancelRunResponse {
@@ -268,25 +274,34 @@ export interface SubmitTtsJobRequest {
 
 // ---------- BGM 线 ----------
 
-export interface MusicStyle {
+export interface MusicPromptSuggestion {
   id: string
-  name: string
-  description: string
+  label: string
+  prompt: string
+}
+
+export interface MusicCapabilities {
+  instrumental: boolean
+  prompt_max_length: number
+  native_duration: boolean
+  structure_control: 'prompt_hint' | 'native'
+  remote_url: boolean
 }
 
 /** GET /api/music/defaults */
 export interface MusicDefaults {
-  styles: MusicStyle[]
-  structures: string[]
+  provider: string
   model: string
+  capabilities: MusicCapabilities
+  prompt_suggestions: MusicPromptSuggestion[]
+  structure_hints: string[]
   duration_range: { min: number; max: number }
 }
 
 export interface SubmitMusicJobRequest {
-  style: string
-  description?: string
-  duration: number
-  structure?: string[]
+  prompt: string
+  target_duration: number
+  structure_hints?: string[]
   format: AudioFormat
 }
 
