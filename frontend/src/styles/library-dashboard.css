@@ -1,0 +1,249 @@
+.page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+}
+
+.page-desc {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.library-page .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.library-tab-count {
+  margin-left: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.library-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 162px;
+}
+
+.library-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.library-card-name {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.library-card-time {
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.library-card-summary {
+  flex: 1;
+  width: 100%;
+  min-height: 24px;
+  margin: 12px 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.library-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 68vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.library-detail > .ant-tag {
+  align-self: flex-start;
+}
+
+.library-audio-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-hero {
+  padding: 26px 28px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: linear-gradient(125deg, rgba(111, 140, 255, 0.14), rgba(44, 201, 167, 0.06));
+}
+
+.dashboard-hero h1 {
+  margin: 0 0 6px;
+  font-size: 25px;
+}
+
+.dashboard-hero p {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.dashboard-runs {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.dashboard-module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.dashboard-module-card {
+  cursor: pointer;
+}
+
+.dashboard-module-card.is-deferred {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.dashboard-module-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 14px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 20px;
+}
+
+.dashboard-module-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dashboard-module-card p {
+  min-height: 44px;
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.dashboard-text-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  cursor: pointer;
+}
+
+.dashboard-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dashboard-stats > div {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border-radius: var(--radius-s);
+  background: var(--panel-2);
+}
+
+.dashboard-stats strong {
+  color: var(--accent-strong);
+  font-size: 26px;
+}
+
+.dashboard-stats span {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.dashboard-recent-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-recent-list button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-recent-list button:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-recent-list button > span:not(.ant-tag) {
+  flex: 1;
+}
+
+.dashboard-recent-list time {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.is-deferred {
+  opacity: 0.58;
+}
+
+@media (max-width: 1000px) {
+  .library-grid,
+  .dashboard-module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .library-grid,
+  .dashboard-module-grid,
+  .dashboard-stats {
+    grid-template-columns: 1fr;
+  }
+}

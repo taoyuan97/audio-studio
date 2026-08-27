@@ -13,6 +13,7 @@ import './styles/global.css'
 import './styles/meditation.css'
 import './styles/tts.css'
 import './styles/bgm.css'
+import './styles/library-dashboard.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

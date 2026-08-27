@@ -15,8 +15,8 @@ const NAV_ITEMS = [
   { key: '/', label: '首页', icon: <HomeOutlined /> },
   { key: '/meditation', label: '冥想', icon: <CloudOutlined /> },
   { key: '/tts', label: 'TTS', icon: <SoundOutlined /> },
-  { key: '/bgm', label: 'BGM', icon: <CustomerServiceOutlined /> },
-  { key: '/mixdown', label: '混音', icon: <SlidersOutlined /> },
+  { key: '/bgm', label: 'BGM（后续开放）', icon: <CustomerServiceOutlined /> },
+  { key: '/mixdown', label: '混音（后续开放）', icon: <SlidersOutlined /> },
   { key: '/library', label: '产物库', icon: <FolderOutlined /> },
   { key: '/settings', label: '设置', icon: <SettingOutlined /> },
 ]
