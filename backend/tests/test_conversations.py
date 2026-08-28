@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
 
@@ -122,9 +123,103 @@ class TestMessages:
         assert roles == ["user", "assistant"]
         user_msg = body["items"][0]
         assert user_msg["params"] == {"duration": 5, "model": "deepseek-chat"}
+        assert user_msg["attachments"] == []
         assistant_msg = body["items"][1]
         assert assistant_msg["params"] is None
         assert "[停顿" in assistant_msg["content"]
+        assert assistant_msg["attachments"] == []
+
+    def test_send_persists_attachment_and_lists_metadata_only(
+        self, app: Starlette, client: TestClient
+    ):
+        conversation = create_conversation(client)
+        response = client.post(
+            f"/api/conversations/{conversation['id']}/messages",
+            json={
+                "text": "参考附件生成",
+                "duration": 5,
+                "model": "deepseek-chat",
+                "attachments": [
+                    {"name": "参考.MD", "content": "\ufeff# 睡眠\n保持舒缓"}
+                ],
+            },
+        )
+        assert response.status_code == 202
+        wait_run_terminal(client, response.json()["run_id"])
+
+        user = client.get(
+            f"/api/conversations/{conversation['id']}/messages"
+        ).json()["items"][0]
+        assert user["attachments"] == [
+            {
+                "id": user["attachments"][0]["id"],
+                "name": "参考.MD",
+                "media_type": "text/markdown",
+                "size": len("# 睡眠\n保持舒缓".encode("utf-8")),
+            }
+        ]
+        assert "content" not in user["attachments"][0]
+
+        stored = app.state.repository.get_message(
+            user["id"], include_attachment_content=True
+        )
+        assert stored["attachments"][0]["content"] == "# 睡眠\n保持舒缓"
+
+    @pytest.mark.parametrize(
+        ("attachment", "code"),
+        [
+            ({"name": "bad.pdf", "content": "x"}, "SCRIPT_ATTACHMENT_TYPE_INVALID"),
+            ({"name": "../bad.txt", "content": "x"}, "SCRIPT_ATTACHMENT_NAME_INVALID"),
+            ({"name": "empty.txt", "content": ""}, "SCRIPT_ATTACHMENT_CONTENT_INVALID"),
+            (
+                {"name": "large.txt", "content": "x" * (200 * 1024 + 1)},
+                "SCRIPT_ATTACHMENT_SIZE_INVALID",
+            ),
+        ],
+    )
+    def test_attachment_validation(self, client: TestClient, attachment: dict, code: str):
+        conversation = create_conversation(client)
+        response = client.post(
+            f"/api/conversations/{conversation['id']}/messages",
+            json={
+                "text": "参考附件",
+                "duration": 5,
+                "model": "deepseek-chat",
+                "attachments": [attachment],
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == code
+        assert client.get(
+            f"/api/conversations/{conversation['id']}/messages"
+        ).json()["items"] == []
+
+    def test_attachment_count_and_character_limits(self, client: TestClient):
+        conversation = create_conversation(client)
+        base = f"/api/conversations/{conversation['id']}/messages"
+        common = {"text": "参考附件", "duration": 5, "model": "deepseek-chat"}
+
+        too_many = client.post(
+            base,
+            json={
+                **common,
+                "attachments": [
+                    {"name": f"{index}.txt", "content": "x"} for index in range(4)
+                ],
+            },
+        )
+        assert too_many.status_code == 422
+        assert too_many.json()["code"] == "SCRIPT_ATTACHMENT_COUNT_INVALID"
+
+        too_many_chars = client.post(
+            base,
+            json={
+                **common,
+                "attachments": [{"name": "long.txt", "content": "中" * 60001}],
+            },
+        )
+        assert too_many_chars.status_code == 422
+        assert too_many_chars.json()["code"] == "SCRIPT_ATTACHMENT_CONTENT_INVALID"
 
     def test_pagination_cursor(self, client: TestClient):
         conversation = create_conversation(client)
@@ -227,6 +322,35 @@ class TestRetry:
             f"/api/conversations/{conversation['id']}/messages"
         ).json()["items"]
         assert [m["role"] for m in after] == ["user", "assistant", "assistant"]
+
+    def test_retry_reuses_attachment_without_copying_user_message(
+        self, client: TestClient
+    ):
+        conversation = create_conversation(client)
+        response = client.post(
+            f"/api/conversations/{conversation['id']}/messages",
+            json={
+                "text": "使用资料",
+                "duration": 5,
+                "model": "deepseek-chat",
+                "attachments": [{"name": "notes.txt", "content": "放松肩膀"}],
+            },
+        )
+        wait_run_terminal(client, response.json()["run_id"])
+        before = client.get(
+            f"/api/conversations/{conversation['id']}/messages"
+        ).json()["items"]
+
+        retry = client.post(
+            f"/api/conversations/{conversation['id']}/messages/{before[0]['id']}/retry"
+        )
+        assert retry.status_code == 202
+        wait_run_terminal(client, retry.json()["run_id"])
+        after = client.get(
+            f"/api/conversations/{conversation['id']}/messages"
+        ).json()["items"]
+        assert [item["role"] for item in after] == ["user", "assistant", "assistant"]
+        assert after[0]["attachments"] == before[0]["attachments"]
 
     def test_retry_non_last_message_rejected(self, client: TestClient):
         conversation = create_conversation(client)

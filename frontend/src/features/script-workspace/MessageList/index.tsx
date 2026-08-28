@@ -3,6 +3,7 @@ import { Button } from 'antd'
 import { useEffect, useRef } from 'react'
 import type { LlmModelInfo, Message } from '../../../api/types'
 import { runErrorText } from '../errors'
+import { formatFileSize } from '../attachments'
 
 export interface RunFailure {
   code: string
@@ -42,6 +43,16 @@ export default function MessageList({
           return (
             <div key={message.id} className="msg user">
               <div className="msg-bubble">{message.content}</div>
+              {message.attachments.length > 0 && (
+                <div className="msg-attachments" aria-label="消息附件">
+                  {message.attachments.map((attachment) => (
+                    <span key={attachment.id} className="msg-attachment" title={attachment.name}>
+                      <span className="msg-attachment-name">{attachment.name}</span>
+                      <span>{formatFileSize(attachment.size)}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               {message.params && (
                 <div className="msg-meta">
                   <span className="model-tag">{message.params.duration} 分钟</span>

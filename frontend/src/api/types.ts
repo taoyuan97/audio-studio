@@ -96,11 +96,24 @@ export interface MessageParams {
   model: string
 }
 
+export interface MessageAttachment {
+  id: string
+  name: string
+  size: number
+  media_type: 'text/markdown' | 'text/plain'
+}
+
+export interface SendMessageAttachment {
+  name: string
+  content: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   params: MessageParams | null
+  attachments: MessageAttachment[]
   created_at: number
 }
 
@@ -133,6 +146,7 @@ export interface SendMessageRequest {
   duration: ScriptDuration
   model: string
   allow_draft_overwrite?: boolean
+  attachments?: SendMessageAttachment[]
 }
 
 export interface CreateConversationRequest {

@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.6
+- 版本：v1.7
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v1.7 增加 T009 冥想消息 `.md` / `.txt` 参考附件、持久化、重试与 LLM 上下文预算契约
 - 变更记录：v1.6 按 MiniMax Music 3.0 官方能力校准 T005：取消正式 style 枚举，以自由 prompt 为核心；structure_hints 为非确定性提示；补充 Provider 能力、24h URL 与脱敏 music_retry 契约
 - 变更记录：v1.5 按阿里云真实验证修正默认 Qwen-TTS 能力：instruction=true、SSML=false、pitch=false；T004 状态改为阿里云技术验收通过、火山延期
 - 变更记录：v1.4 阿里云 TTS 改用独立 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，defaults 与 settings status 暴露实际 TTS 模型 ID
@@ -20,7 +21,7 @@
 | 章节 | 能力 | 实施状态 | 归属 |
 |---|---|---|---|
 | 第 3 节 | health / stats | 已实现 | T002 |
-| 第 4 节 | 冥想会话、消息、模型、草稿与版本保存 | 已实现 | T003 |
+| 第 4 节 | 冥想会话、消息、参考附件、模型、草稿与版本保存 | 已实现 | T003/T009 |
 | 第 5 节 | run 查询、SSE、取消 | 已实现 | T002 |
 | 第 6 节 | artifacts 基座、音频/peaks、脚本版本查看与恢复 | 已实现（T002 基座 + T003 扩展） | T002/T003 |
 | 第 7 节 | TTS | 已实现；阿里云技术验收通过，火山延期 | T004 |
@@ -159,8 +160,8 @@
 ```json
 {
   "items": [
-    { "id": "msg_...", "role": "user", "content": "生成一段深海放松冥想", "params": { "duration": 15, "model": "deepseek-chat" }, "created_at": 0 },
-    { "id": "msg_...", "role": "assistant", "content": "欢迎来到...", "params": null, "created_at": 0 }
+    { "id": "msg_...", "role": "user", "content": "生成一段深海放松冥想", "params": { "duration": 15, "model": "deepseek-chat" }, "attachments": [{ "id": "att_...", "name": "参考.md", "size": 1234, "media_type": "text/markdown" }], "created_at": 0 },
+    { "id": "msg_...", "role": "assistant", "content": "欢迎来到...", "params": null, "attachments": [], "created_at": 0 }
   ],
   "has_more": false
 }
@@ -173,17 +174,25 @@
 - 请求：
 
 ```json
-{ "text": "生成一段深海放松冥想", "duration": 15, "model": "deepseek-chat", "allow_draft_overwrite": false }
+{
+  "text": "生成一段深海放松冥想",
+  "duration": 15,
+  "model": "deepseek-chat",
+  "allow_draft_overwrite": false,
+  "attachments": [{ "name": "参考.md", "content": "# 睡前放松\n..." }]
+}
 ```
 
 - 校验：`text` 非空 ≤20000 字符；`duration` ∈ {5,10,15,20,25,30}；`model` 必须在可用模型列表。
+- `attachments` 可选、默认 `[]`，最多 3 个；仅允许大小写不敏感的 `.md` / `.txt` basename。单文件 UTF-8 字节数 ≤200 KB，合计 ≤500 KB，正文合计 ≤60000 字符；空正文、NUL、路径式文件名均拒绝。
+- 客户端只发送附件 `name/content`；服务端计算 `size/media_type` 并持久化。消息列表只返回附件元数据，不返回正文。
 - 响应 202：run 载荷（`kind: "script"`）。
 - 409：`CONVERSATION_RUN_ACTIVE`；manual/restored 未保存草稿且未确认覆盖时为 `SCRIPT_DRAFT_OVERWRITE_CONFIRM_REQUIRED`。
-- 422：`SCRIPT_TEXT_INVALID` / `SCRIPT_PARAMS_INVALID`。
+- 422：`SCRIPT_TEXT_INVALID` / `SCRIPT_PARAMS_INVALID` / `SCRIPT_ATTACHMENT_*`。
 
 ### 4.7 POST /api/conversations/{id}/messages/{mid}/retry
 
-重试失败的助手消息（以该用户消息重新生成）。
+重试失败的助手消息（以该用户消息及其已持久化附件重新生成，不复制 user 消息或附件）。
 
 - 请求体：空。
 - 响应 202：run 载荷。409/404 同前。
@@ -594,6 +603,11 @@ SSE 事件流（协议见第 11 节）。
 | `CONVERSATION_RUN_ACTIVE` | 409 | 会话已有活动剧本 run | 展示运行中 |
 | `SCRIPT_TEXT_INVALID` | 422 | 剧本文本空/超长 | 表单校验提示 |
 | `SCRIPT_PARAMS_INVALID` | 422 | duration/model 非法 | 表单校验提示 |
+| `SCRIPT_ATTACHMENT_COUNT_INVALID` | 422 | 单次附件超过 3 个 | 保留已选附件并提示 |
+| `SCRIPT_ATTACHMENT_NAME_INVALID` | 422 | 文件名为空、包含路径或 NUL | 移除无效附件并提示 |
+| `SCRIPT_ATTACHMENT_TYPE_INVALID` | 422 | 非 `.md` / `.txt` | 提示支持的格式 |
+| `SCRIPT_ATTACHMENT_SIZE_INVALID` | 422 | 单文件超过 200 KB 或合计超过 500 KB | 移除超限附件并提示 |
+| `SCRIPT_ATTACHMENT_CONTENT_INVALID` | 422 | 正文为空、含 NUL 或合计超过 60000 字符 | 提示转换/缩减文件 |
 | `SCRIPT_LLM_NOT_CONFIGURED` | 422 | 模型未配置 | 引导去设置页 |
 | `SCRIPT_LLM_ERROR` | 502 | LLM 调用失败（脱敏） | 失败卡片+重试 |
 | `SCRIPT_TIMEOUT` | 504 | LLM 流式超时 | 失败卡片+重试 |

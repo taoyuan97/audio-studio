@@ -35,6 +35,19 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at ASC);
 
+CREATE TABLE IF NOT EXISTS message_attachments (
+  id          TEXT PRIMARY KEY,
+  message_id  TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  media_type  TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  content     TEXT NOT NULL,
+  position    INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_message_attachments_message
+  ON message_attachments(message_id, position ASC);
+
 CREATE TABLE IF NOT EXISTS runs (
   id               TEXT PRIMARY KEY,
   kind             TEXT NOT NULL,
@@ -298,8 +311,10 @@ class Repository:
         role: str,
         content: str,
         params: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         message_id = new_id("msg")
+        created_at = now_ms()
         with self.transaction() as connection:
             connection.execute(
                 """INSERT INTO messages (id, conversation_id, role, content, params_json, created_at)
@@ -310,19 +325,40 @@ class Repository:
                     role,
                     content,
                     json.dumps(params, ensure_ascii=False) if params is not None else None,
-                    now_ms(),
+                    created_at,
                 ),
             )
+            for position, attachment in enumerate(attachments or []):
+                connection.execute(
+                    """INSERT INTO message_attachments
+                       (id, message_id, name, media_type, size, content, position, created_at)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (
+                        new_id("att"),
+                        message_id,
+                        attachment["name"],
+                        attachment["media_type"],
+                        attachment["size"],
+                        attachment["content"],
+                        position,
+                        created_at,
+                    ),
+                )
         return self.get_message(message_id)
 
-    def get_message(self, message_id: str) -> dict[str, Any]:
+    def get_message(
+        self, message_id: str, *, include_attachment_content: bool = False
+    ) -> dict[str, Any]:
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT * FROM messages WHERE id=?", (message_id,)
             ).fetchone()
+            attachments = self._attachments_by_message(
+                connection, [message_id], include_content=include_attachment_content
+            )
         if row is None:
             raise NotFoundError("消息不存在")
-        return self._message_dict(row)
+        return self._message_dict(row, attachments.get(message_id, []))
 
     def list_messages(
         self,
@@ -330,6 +366,7 @@ class Repository:
         *,
         before: str | None = None,
         limit: int = 50,
+        include_attachment_content: bool = False,
     ) -> tuple[list[dict[str, Any]], bool]:
         """游标分页（api-contract.md 2.3）：时间正序返回，has_more 表示还有更早消息。
 
@@ -352,20 +389,63 @@ class Repository:
                     ORDER BY created_at DESC, id DESC LIMIT ?""",
                 [*params, limit + 1],
             ).fetchall()
+            page_rows = rows[:limit]
+            attachments = self._attachments_by_message(
+                connection,
+                [row["id"] for row in page_rows],
+                include_content=include_attachment_content,
+            )
         has_more = len(rows) > limit
-        items = [self._message_dict(row) for row in reversed(rows[:limit])]
+        items = [
+            self._message_dict(row, attachments.get(row["id"], []))
+            for row in reversed(page_rows)
+        ]
         return items, has_more
 
     @staticmethod
-    def _message_dict(row: sqlite3.Row) -> dict[str, Any]:
+    def _message_dict(
+        row: sqlite3.Row, attachments: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
         return {
             "id": row["id"],
             "conversation_id": row["conversation_id"],
             "role": row["role"],
             "content": row["content"],
             "params": _loads(row["params_json"]),
+            "attachments": attachments or [],
             "created_at": row["created_at"],
         }
+
+    @staticmethod
+    def _attachments_by_message(
+        connection: sqlite3.Connection,
+        message_ids: list[str],
+        *,
+        include_content: bool,
+    ) -> dict[str, list[dict[str, Any]]]:
+        if not message_ids:
+            return {}
+        placeholders = ",".join("?" for _ in message_ids)
+        content_column = ", content" if include_content else ""
+        rows = connection.execute(
+            f"""SELECT id, message_id, name, media_type, size{content_column}
+                FROM message_attachments
+                WHERE message_id IN ({placeholders})
+                ORDER BY position ASC, id ASC""",
+            message_ids,
+        ).fetchall()
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            item = {
+                "id": row["id"],
+                "name": row["name"],
+                "media_type": row["media_type"],
+                "size": row["size"],
+            }
+            if include_content:
+                item["content"] = row["content"]
+            grouped.setdefault(row["message_id"], []).append(item)
+        return grouped
 
     # ---------------- runs ----------------
 

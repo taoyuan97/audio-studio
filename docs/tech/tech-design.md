@@ -2,16 +2,17 @@
 
 ## 1. 文档信息
 
-- 版本：v1.6
+- 版本：v1.7
 - 状态：设计已确认、部分实施（T001–T003 已完成；T004 阿里云技术验收通过、火山延期；T005 实现完成、真实 MiniMax smoke 因 Key/账号权限阻塞；T006–T008 待实施）
 - 创建日期：2026-08-26
+- 变更记录：v1.7 增加 T009 冥想消息 Markdown/TXT 参考附件、SQLite 持久化及 LLM 上下文预算设计
 - 变更记录：v1.6 按 MiniMax Music 3.0 官方能力校准 T005：取消正式 style 枚举、自由 prompt 为核心、structure_hints 降级为非确定性提示，并引入 Provider 中立适配边界与脱敏重试能力
 - 变更记录：v1.5 记录阿里云真实验证结果：`qwen-audio-3.0-tts-plus` instruction=true、SSML=false、pitch=false，停顿改走本地静音；FFmpeg 9.0.1 安装并修复 Windows `ffprobe.exe` 同目录探测；火山鉴权验证延期
 - 变更记录：v1.4 阿里云 TTS 与通义千问 LLM 配置隔离：新增 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`，禁止 TTS 回退读取 `DASHSCOPE_*`；设置状态展示 TTS 实际模型 ID
 - 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
 - 变更记录：v1.2 API 契约与数据模型拆分为独立文档（`api-contract.md` / `data-model.md`，实现级单一事实源），本文 5.2/5.4 改为摘要概览
 - 变更记录：v1.1 吸收 meditation-guide-studio（`C:\projects\apps\meditation-guide-studio`）已验证实现——TTS 双引擎接入代码移植、情绪 instruction 映射定论、SSML break/静音切分双策略、音频落盘原子化规范、run 进度持久化、MiniMax 同步接口修正（E1）与计费安全重试（E8）、48kHz 基准（E2）、呼吸停顿 4s/5s（E4）
-- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T008`（任务拆分）
+- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T009`（任务拆分）
 - 技术栈基准：`article-studio/docs/tech/tech-design.md`
 - 交互基准：`prototype/`（已验收原型，前端功能语义来源）
 
@@ -75,7 +76,7 @@
 | 剧本生成（A3） | 单次 LLM 调用 + 流式，**不用 LangGraph**；ModelRegistry 模式沿用（OpenAI 兼容 httpx 直连，无 LangChain 依赖） |
 | 长任务协议（A2） | TTS/BGM/混音/剧本统一 run + SSE |
 | 任务并发（C3） | 全局单任务串行队列（FIFO），队列上限 8 → 超出 409 `RUN_QUEUE_FULL` |
-| 数据模型（A4 修订） | conversations/messages/runs/artifacts + script_drafts + artifact_versions；会话至多一个逻辑脚本产物，AI/编辑写草稿，用户手动追加版本 |
+| 数据模型（A4 修订） | conversations/messages/message_attachments/runs/artifacts + script_drafts + artifact_versions；会话至多一个逻辑脚本产物，AI/编辑写草稿，用户手动追加版本 |
 | 存储（B1） | 本地 `data/audio/` 音频文件（StaticFiles 托管）+ SQLite 单库；放弃 OSS |
 | TTS（B2） | 统一 `TTSProvider` 接口，阿里云 DashScope + 火山引擎双适配；阿里云真实链路已验证，火山待官方鉴权说明后验证 |
 | 情绪标记（B3/E7） | 阿里云 `qwen-audio-3.0-tts-plus` 为默认模型，`[情绪:x]` → instruction 直传（已验证支持）；火山按 `TTSCapabilities` 能力声明降级为普通朗读；不引入 sambert 旧模型分支 |
@@ -188,7 +189,7 @@ audio-studio/
 
 ### 5.4 数据存储（概览，详见 [data-model.md](data-model.md)）
 
-SQLite 单库（WAL）：核心表 `conversations/messages/runs/artifacts`，剧本另有 `script_drafts` 工作草稿与 `artifact_versions` 不可变版本；artifact 保存当前版本物化快照，后端 marker 解析仍是唯一事实源。
+SQLite 单库（WAL）：核心表 `conversations/messages/message_attachments/runs/artifacts`，剧本另有 `script_drafts` 工作草稿与 `artifact_versions` 不可变版本；消息附件正文仅供服务端 LLM 上下文使用，列表 API 只返回元数据；artifact 保存当前版本物化快照，后端 marker 解析仍是唯一事实源。
 
 文件：`data/audio/artifacts/{id}.mp3|.wav`（音频产物）、`data/audio/previews/{engine}_{voice}.wav`（试听缓存）、`data/audio/peaks/{id}.json`（波形峰值缓存）；`DATA_DIR` 配置，正式项目数据从零开始。
 
@@ -204,8 +205,8 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
   - 三家实际模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 配置，必须非空且互不重复；工作台下拉只显示实际模型 ID。修改 `.env` 后重启生效，历史版本中的旧 ID 不迁移。
 - **`app/script/prompts.py`**：冥想专用 Prompt 模板——角色设定 + 标记规范（`[停顿 Ns]`/`[情绪:x]`/`[语速:x]`/`[吸气]`/`[呼气]`）+ 结构要求（引导进入→主体→收尾）+ 时长-篇幅映射（5/10/15/20/25/30min≈1200/2200/3200/4200/5100/6000 字，含停顿折算）。
 - **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`{kind: speech|pause, text?, emotion?, speed?, seconds?}`）+ 预估时长（语速档 × 字数 + 停顿求和）。生成完成与 PATCH 编辑时均执行，随产物存储，前端直接渲染徽章与时间轴，**不在 TS 重复实现解析**。
-- **会话流**：POST messages → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 messages + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
-- 多轮 refinement：历史消息全部入上下文（预算内截断），用户可自然语言微调。
+- **会话流**：POST messages → 同事务写用户消息与 `.md` / `.txt` 参考附件 → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 assistant message + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
+- 多轮 refinement：历史消息全部入上下文（预算内截断），用户可自然语言微调。当前轮附件完整加入带不可信资料声明的 JSON 安全边界；历史正文优先占用 12000 字符预算，剩余预算按由近到远顺序加入历史附件并允许截断。
 
 ### 5.6 TTS 线设计
 
@@ -422,6 +423,7 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | T006 | 混音线：FFmpeg 封装/滤镜链/导出/双轨波形/混音页 | T004, T005 |
 | T007 | 产物库 + 首页 + 设置页 | T002（各线产物陆续接入） |
 | T008 | E2E 联调与验收（FAKE_MODE 主路径 + 真实服务 smoke） | 全部 |
+| T009 | 冥想消息 Markdown/TXT 参考附件：选择校验、持久化、Prompt 与重试 | T003 |
 | 二期 T101+ | 播客剧本线（scene=podcast，意图识别/润色模式），复用 T004/T006 | 一期完成 |
 
 建议顺序：T001/T002 并行 → T003 → T004 → T005 → T006 → T007 → T008。B3 情绪支持度已由 meditation-guide-studio 验证，`smoke_tts.py` 仅作 T004 完工后的连通复核，不再阻塞开工。

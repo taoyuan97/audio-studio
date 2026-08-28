@@ -4,12 +4,13 @@ import {
   CheckOutlined,
   EditOutlined,
   HistoryOutlined,
+  PlusOutlined,
   SaveOutlined,
   SendOutlined,
   StopOutlined,
 } from '@ant-design/icons'
 import { App, Button, Input, List, Modal, Skeleton, Tag } from 'antd'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
@@ -23,18 +24,35 @@ import {
 } from '../api/conversations'
 import { listArtifactVersions, restoreArtifactVersion } from '../api/artifacts'
 import { cancelRun } from '../api/runs'
-import type { ScriptContent, ScriptDuration, ScriptVersion } from '../api/types'
+import type {
+  ScriptContent,
+  ScriptDuration,
+  ScriptVersion,
+  SendMessageAttachment,
+} from '../api/types'
 import { useRunStream } from '../lib/sse'
 import { useUiStore } from '../stores/uiStore'
 import DurationSelect from '../components/DurationSelect'
 import ModelSelect from '../components/ModelSelect'
 import MessageList, { type RunFailure } from '../features/script-workspace/MessageList'
 import ScriptView from '../features/script-workspace/ScriptView'
+import {
+  formatFileSize,
+  mergeSelectedFiles,
+  type PendingAttachment,
+} from '../features/script-workspace/attachments'
 
 /** 生成步骤动画（结果区，对齐原型语义） */
 const GEN_STEPS = ['解析主题与目标时长', '模型流式生成脚本', '标记解析与产物入库']
 
 type RunPhase = 'queued' | 'streaming' | 'finalizing'
+
+interface PendingSend {
+  text: string
+  duration: ScriptDuration
+  model: string
+  attachments: SendMessageAttachment[]
+}
 
 /** /meditation/:conversationId 工作台（专注模式）：对话 + 脚本结果区 + 编辑闭环 */
 export default function MeditationWorkspacePage() {
@@ -84,6 +102,8 @@ export default function MeditationWorkspacePage() {
   const [duration, setDuration] = useState<ScriptDuration>(15)
   const [model, setModel] = useState('')
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
 
   // 参数默认值：工作草稿（最近一次生成）优先，其次当前正式版本与模型列表首个
   useEffect(() => {
@@ -168,35 +188,57 @@ export default function MeditationWorkspacePage() {
   const [overwriteOpen, setOverwriteOpen] = useState(false)
   const [overwriteIsRetry, setOverwriteIsRetry] = useState(false)
   const [sendAfterSave, setSendAfterSave] = useState(false)
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(null)
 
-  const submitMessage = async (allowDraftOverwrite = false) => {
-    const text = input.trim()
-    if (!text || running || !conversationId) return
+  const createSendSnapshot = (): PendingSend => ({
+    text: input.trim(),
+    duration,
+    model,
+    attachments: attachments.map(({ name, content }) => ({ name, content })),
+  })
+
+  const submitMessage = async (
+    allowDraftOverwrite = false,
+    snapshot = createSendSnapshot(),
+  ) => {
+    if (!snapshot.text || running || !conversationId) return
     try {
       const run = await sendMessage(conversationId, {
-        text,
-        duration,
-        model,
+        ...snapshot,
         allow_draft_overwrite: allowDraftOverwrite,
       })
       enterRunState(run.run_id)
       setInput('')
+      setAttachments([])
+      setPendingSend(null)
     } catch (error) {
+      setPendingSend(null)
       handleActionError(error, '发送失败')
     }
   }
 
   const handleSend = () => {
     if (editing || editMutation.isPending) return
+    const snapshot = createSendSnapshot()
+    if (!snapshot.text || !snapshot.model) return
     const protectedDraft =
       hasUnsavedChanges &&
       (scriptDraft?.origin === 'manual' || scriptDraft?.origin === 'restored')
     if (protectedDraft) {
+      setPendingSend(snapshot)
       setOverwriteIsRetry(false)
       setOverwriteOpen(true)
       return
     }
-    void submitMessage()
+    void submitMessage(false, snapshot)
+  }
+
+  const handleAttachmentChange = async (files: FileList | null) => {
+    if (!files) return
+    const result = await mergeSelectedFiles(attachments, Array.from(files))
+    setAttachments(result.accepted)
+    if (result.errors.length > 0) message.warning(result.errors.join('；'))
+    if (attachmentInputRef.current) attachmentInputRef.current.value = ''
   }
 
   const handleCancel = async () => {
@@ -313,11 +355,12 @@ export default function MeditationWorkspacePage() {
         setSendAfterSave(false)
         setOverwriteOpen(false)
         if (overwriteIsRetry) await submitRetry(true)
-        else await submitMessage(true)
+        else if (pendingSend) await submitMessage(true, pendingSend)
       }
     },
     onError: (error) => {
       setSendAfterSave(false)
+      setPendingSend(null)
       if (error instanceof ApiError) {
         if (error.code === 'SCRIPT_DRAFT_REVISION_CONFLICT') {
           queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
@@ -417,8 +460,52 @@ export default function MeditationWorkspacePage() {
               }}
             />
           </div>
+          {attachments.length > 0 && (
+            <div className="composer-attachments" aria-label="待发送附件">
+              {attachments.map((attachment) => (
+                <span key={attachment.key} className="composer-attachment" title={attachment.name}>
+                  <span className="composer-attachment-name">{attachment.name}</span>
+                  <span>{formatFileSize(attachment.size)}</span>
+                  <button
+                    type="button"
+                    aria-label={`移除 ${attachment.name}`}
+                    disabled={running || editing || editMutation.isPending}
+                    onClick={() =>
+                      setAttachments((current) =>
+                        current.filter((item) => item.key !== attachment.key),
+                      )
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="composer-foot">
             <div className="composer-tools">
+              <input
+                ref={attachmentInputRef}
+                className="attachment-input"
+                type="file"
+                multiple
+                accept=".md,.txt,text/markdown,text/plain"
+                tabIndex={-1}
+                aria-hidden="true"
+                onChange={(event) => void handleAttachmentChange(event.target.files)}
+              />
+              <Button
+                className="attachment-trigger"
+                type="text"
+                shape="circle"
+                icon={<PlusOutlined />}
+                aria-label="添加参考资料"
+                title={attachments.length >= 3 ? '单次最多 3 个附件' : '添加参考资料'}
+                disabled={
+                  attachments.length >= 3 || running || editing || editMutation.isPending
+                }
+                onClick={() => attachmentInputRef.current?.click()}
+              />
               <DurationSelect
                 value={duration}
                 onChange={setDuration}
@@ -432,12 +519,10 @@ export default function MeditationWorkspacePage() {
                 disabled={running || editing || editMutation.isPending}
               />
             </div>
-            {!modelsQuery.isLoading && models.length === 0 ? (
+            {!modelsQuery.isLoading && models.length === 0 && (
               <span className="composer-tip" role="note">
                 未配置任何模型：请在服务端 .env 配置 LLM API Key（DEEPSEEK/DASHSCOPE/MOONSHOT）并重启
               </span>
-            ) : (
-              <span className="composer-tip">Enter 发送 · Shift+Enter 换行</span>
             )}
             {running ? (
               <Button
@@ -523,6 +608,7 @@ export default function MeditationWorkspacePage() {
         onCancel={() => {
           setSaveNameOpen(false)
           setSendAfterSave(false)
+          setPendingSend(null)
         }}
         onOk={() => saveVersionMutation.mutate(scriptName.trim())}
         destroyOnHidden
@@ -551,7 +637,13 @@ export default function MeditationWorkspacePage() {
         open={overwriteOpen}
         closable={!saveVersionMutation.isPending}
         footer={[
-          <Button key="cancel" onClick={() => setOverwriteOpen(false)}>
+          <Button
+            key="cancel"
+            onClick={() => {
+              setOverwriteOpen(false)
+              setPendingSend(null)
+            }}
+          >
             取消
           </Button>,
           <Button
@@ -560,7 +652,7 @@ export default function MeditationWorkspacePage() {
             onClick={() => {
               setOverwriteOpen(false)
               if (overwriteIsRetry) void submitRetry(true)
-              else void submitMessage(true)
+              else if (pendingSend) void submitMessage(true, pendingSend)
             }}
           >
             覆盖草稿并继续

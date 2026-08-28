@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.2
+- 版本：v1.3
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v1.3 增加 T009 `message_attachments` 文本参考附件表及生命周期
 - 变更记录：v1.2 校准 T005：BGM 以自由 prompt 取代 style 枚举，structure_hints 为非确定性提示；music result_json 保存请求快照、远程结果与重试来源
 - 变更记录：v1.1 增加 T003 的 `script_drafts`、`artifact_versions` 与 artifact 当前版本字段，并按实际实现将数据库访问方式校准为 sqlite3 同步短连接
 - 关联文档：`docs/tech/tech-design.md`（总体设计）、`docs/tech/api-contract.md`（API 契约）
@@ -22,6 +23,7 @@
 
 ```text
 conversations 1 ──── N messages
+messages      1 ──── 0..3 message_attachments       [用户参考资料；assistant 为 0]
 conversations 1 ──── 0..1 script_drafts           [工作草稿，不进入产物库]
 conversations 1 ──── 0..1 artifacts(type=script_*)[逻辑脚本产物，用户首次保存创建]
 artifacts    1 ──── N artifact_versions            [用户手动保存的不可变版本]
@@ -64,7 +66,28 @@ CREATE INDEX idx_messages_conv ON messages(conversation_id, created_at ASC);
 { "duration": 15, "model": "deepseek-chat" }
 ```
 
-### 4.3 runs（全局运行任务）
+### 4.3 message_attachments（消息参考附件）
+
+```sql
+CREATE TABLE message_attachments (
+  id          TEXT PRIMARY KEY,
+  message_id  TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  media_type  TEXT NOT NULL,              -- text/markdown | text/plain
+  size        INTEGER NOT NULL,            -- 服务端按 content UTF-8 编码计算的字节数
+  content     TEXT NOT NULL,               -- LLM 使用的参考正文；消息列表 API 不返回
+  position    INTEGER NOT NULL,            -- 同一消息内的选择顺序（从 0 开始）
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX idx_message_attachments_message
+  ON message_attachments(message_id, position ASC);
+```
+
+- user 消息与附件在同一事务写入；失败重试复用原附件，不复制记录。
+- 消息分页批量加载附件元数据，正文仅供服务端组装 LLM 上下文。
+- 删除会话时经 `messages` 外键级联删除；附件不复制进 script draft、artifact 或 version。
+
+### 4.4 runs（全局运行任务）
 
 ```sql
 CREATE TABLE runs (
@@ -107,7 +130,7 @@ CREATE INDEX idx_runs_status ON runs(status, created_at ASC);
 
 > 生成成功即下载持久化，`audio_url` 仅供失败 run 的 `retry=download` 免计费重下载使用。
 
-### 4.4 artifacts（产物，单表多态）
+### 4.5 artifacts（产物，单表多态）
 
 ```sql
 CREATE TABLE artifacts (
@@ -129,7 +152,7 @@ CREATE TABLE artifacts (
 CREATE INDEX idx_artifacts_type ON artifacts(type, created_at DESC);
 ```
 
-### 4.5 script_drafts（会话工作草稿）
+### 4.6 script_drafts（会话工作草稿）
 
 ```sql
 CREATE TABLE script_drafts (
@@ -145,7 +168,7 @@ CREATE TABLE script_drafts (
 
 草稿自动持久化但不属于产物库；AI 生成成功后原子替换 generated 草稿，人工编辑与版本恢复分别标记 manual/restored。更新接口携带 `expected_revision`，不一致返回 409。
 
-### 4.6 artifact_versions（脚本不可变版本）
+### 4.7 artifact_versions（脚本不可变版本）
 
 ```sql
 CREATE TABLE artifact_versions (
