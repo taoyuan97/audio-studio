@@ -2,9 +2,11 @@
 
 ## 1. 文档信息
 
-- 版本：v1.3
+- 版本：v1.5
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v1.5 明确仅 `settings.json` 中的浏览器凭据覆盖可按字段回显，`.env` 基线永不回显
+- 变更记录：v1.4 增加 T007 `DATA_DIR/settings.json` 运行时配置覆盖的布局、优先级与敏感数据规则
 - 变更记录：v1.3 增加 T009 `message_attachments` 文本参考附件表及生命周期
 - 变更记录：v1.2 校准 T005：BGM 以自由 prompt 取代 style 枚举，structure_hints 为非确定性提示；music result_json 保存请求快照、远程结果与重试来源
 - 变更记录：v1.1 增加 T003 的 `script_drafts`、`artifact_versions` 与 artifact 当前版本字段，并按实际实现将数据库访问方式校准为 sqlite3 同步短连接
@@ -273,7 +275,21 @@ CREATE TABLE artifact_versions (
 
 `content_json`：`null`。`audio_path`：必有。
 
-## 6. 文件布局（DATA_DIR/audio/）
+## 6. 文件布局（DATA_DIR）
+
+```text
+DATA_DIR/
+├─ settings.json             # T007 浏览器运行时配置覆盖（含凭据，不入库/不提交 Git）
+├─ audio.sqlite3
+└─ audio/
+   ├─ artifacts/
+   ├─ previews/
+   └─ peaks/
+```
+
+`settings.json` 不是业务数据表：保存 revision 与浏览器设置的字段级覆盖值，由 `SettingsStore` 整体校验后通过同目录临时文件 + `os.replace` 原子写入。读取优先级为运行时文件 > `.env` > 默认值。状态 API 只返回掩码、来源和可回显字段名；专用 reveal API 可按字段返回本文件中的浏览器凭据覆盖，但绝不读取或回退到 `.env`，响应禁止缓存。该文件属于本机敏感数据，生命周期随 `DATA_DIR`，备份和迁移时须按凭据文件处理。
+
+### 6.1 音频文件布局（DATA_DIR/audio/）
 
 ```text
 data/

@@ -25,6 +25,10 @@ export function deleteArtifact(id: string) {
   return apiFetch<DeleteArtifactResponse>(`/api/artifacts/${id}`, { method: 'DELETE' })
 }
 
+export function clearArtifacts() {
+  return apiFetch<{ deleted: number }>('/api/artifacts', { method: 'DELETE' })
+}
+
 export function getPeaks(id: string, signal?: AbortSignal) {
   return apiFetch<PeaksResponse>(`/api/artifacts/${id}/peaks`, { signal })
 }

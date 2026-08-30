@@ -73,6 +73,36 @@ body {
 
 /* ---------------- 侧边栏品牌区 ---------------- */
 
+.app-shell {
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.app-sider {
+  position: fixed !important;
+  inset-block: 0;
+  inset-inline-start: 0;
+  z-index: 20;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.app-main {
+  min-width: 0;
+  height: 100vh;
+  margin-inline-start: 232px;
+  overflow: hidden;
+}
+
+.app-content {
+  min-height: 0;
+  padding: 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .app-brand {
   display: flex;
   align-items: center;

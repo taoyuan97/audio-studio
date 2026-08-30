@@ -7,13 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Artifact } from '../api/types'
 import LibraryPage from './LibraryPage'
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), remove: vi.fn() }))
+const mocks = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), remove: vi.fn(), clear: vi.fn(), versions: vi.fn(), conversation: vi.fn() }))
 
 vi.mock('../api/artifacts', () => ({
   listArtifacts: mocks.list,
   updateArtifact: mocks.update,
   deleteArtifact: mocks.remove,
+  clearArtifacts: mocks.clear,
+  listArtifactVersions: mocks.versions,
+  restoreArtifactVersion: vi.fn(),
 }))
+vi.mock('../api/conversations', () => ({ getConversation: mocks.conversation }))
 vi.mock('../components/WaveformView', () => ({ default: () => <div>测试波形</div> }))
 vi.mock('../components/AudioPlayer', () => ({ default: () => <div>测试播放器</div> }))
 
@@ -28,6 +32,12 @@ const voice: Artifact = {
   params: { engine: 'aliyun', voice_name: '龙安聆心', speed: 0.8, format: 'mp3' }, content: null,
   audio: { format: 'mp3', duration: 301.5, url: '/api/artifacts/art_voice/audio', peaks_url: '/api/artifacts/art_voice/peaks' },
   created_at: 1000, updated_at: 1000, current_version_id: null, current_version_no: null,
+}
+const bgm: Artifact = {
+  id: 'art_bgm', type: 'bgm', name: '深海背景音', conversation_id: null, source_run_id: 'run_3',
+  params: { prompt: '深海环境氛围', target_duration: 300, format: 'mp3' }, content: null,
+  audio: { format: 'mp3', duration: 300, url: '/api/artifacts/art_bgm/audio', peaks_url: '/api/artifacts/art_bgm/peaks' },
+  created_at: 900, updated_at: 900, current_version_id: null, current_version_no: null,
 }
 
 function LocationProbe() {
@@ -47,22 +57,26 @@ describe('LibraryPage', () => {
   afterEach(cleanup)
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.list.mockImplementation(({ type }: { type: string }) => Promise.resolve({ items: type === 'script_meditation' ? [script] : [voice] }))
+    mocks.list.mockResolvedValue({ items: [script, voice, bgm] })
     mocks.update.mockResolvedValue({ ...script, name: '新名称' })
     mocks.remove.mockResolvedValue({ deleted: true })
+    mocks.clear.mockResolvedValue({ deleted: 3 })
+    mocks.versions.mockResolvedValue({ items: [] })
+    mocks.conversation.mockResolvedValue({ script_draft: { revision: 1 } })
   })
 
-  it('renders only meditation and TTS artifacts and keeps deferred tabs empty', async () => {
+  it('renders all artifact types and filters the BGM tab', async () => {
     const user = userEvent.setup()
     renderPage()
     expect(await screen.findByText('深海放松')).toBeInTheDocument()
     expect(screen.getByText('深海放松·人声')).toBeInTheDocument()
-    expect(mocks.list).toHaveBeenCalledTimes(2)
-    expect(mocks.list).toHaveBeenCalledWith({ type: 'script_meditation', limit: 500 })
-    expect(mocks.list).toHaveBeenCalledWith({ type: 'voice', limit: 500 })
+    expect(screen.getByText('深海背景音')).toBeInTheDocument()
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    expect(mocks.list).toHaveBeenCalledWith({ limit: 500 })
 
     await user.click(screen.getByRole('tab', { name: /背景音/ }))
-    expect(screen.getByText('背景音功能后续开放')).toBeInTheDocument()
+    expect(screen.getByText('深海背景音')).toBeInTheDocument()
+    expect(screen.queryByText('深海放松·人声')).not.toBeInTheDocument()
   })
 
   it('opens script detail and hands it off to TTS', async () => {

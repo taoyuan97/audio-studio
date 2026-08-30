@@ -50,14 +50,11 @@ def test_aliyun_tts_configuration_is_independent_from_dashscope():
     assert settings.aliyun_tts_model_id == "qwen-audio-3.0-tts-plus"
 
 
-def test_duplicate_model_ids_are_rejected_with_field_names():
-    with pytest.raises(
-        ValidationError,
-        match="DEEPSEEK_MODEL_ID 与 DASHSCOPE_MODEL_ID",
-    ):
-        Settings(
-            _env_file=None,
-            deepseek_model_id="same-model",
-            dashscope_model_id="same-model",
-            moonshot_model_id="other-model",
-        )
+def test_duplicate_model_ids_are_allowed_across_providers():
+    settings = Settings(
+        _env_file=None,
+        deepseek_model_id="same-model",
+        dashscope_model_id="same-model",
+        moonshot_model_id="other-model",
+    )
+    assert settings.deepseek_model_id == settings.dashscope_model_id == "same-model"

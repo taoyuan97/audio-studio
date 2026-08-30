@@ -64,6 +64,9 @@ class ModelRegistry:
     def get(self, model: str) -> LlmModel | None:
         return self._models.get(model)
 
+    def get_by_provider(self, provider: str) -> LlmModel | None:
+        return next((entry for entry in self._entries if entry.provider == provider), None)
+
     def is_configured(self, model: str) -> bool:
         entry = self._models.get(model)
         return bool(entry and getattr(self.settings, entry.api_key_setting))

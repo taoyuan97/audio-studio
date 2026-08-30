@@ -30,14 +30,14 @@ describe('DashboardPage', () => {
     })
   })
 
-  it('shows supported stats and filters deferred artifacts and runs', async () => {
+  it('shows complete stats, recent artifacts and active runs', async () => {
     renderPage()
     expect(await screen.findByText('最近人声')).toBeInTheDocument()
     expect(screen.getByText('最近脚本')).toBeInTheDocument()
-    expect(screen.queryByText('不应展示的 BGM')).not.toBeInTheDocument()
+    expect(screen.getByText('不应展示的 BGM')).toBeInTheDocument()
     expect(screen.getByText('TTS 人声合成中')).toBeInTheDocument()
-    expect(screen.queryByText('music')).not.toBeInTheDocument()
-    expect(screen.getAllByText('后续开放').length).toBeGreaterThanOrEqual(2)
-    expect(screen.getByText('BGM 功能当前阻塞')).toBeInTheDocument()
+    expect(screen.getByText('BGM 生成中')).toBeInTheDocument()
+    expect(screen.getByText('用自然语言生成可循环的纯音乐背景轨')).toBeInTheDocument()
+    expect(screen.getByText('8')).toBeInTheDocument()
   })
 })

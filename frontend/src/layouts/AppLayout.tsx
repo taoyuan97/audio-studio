@@ -15,7 +15,7 @@ const NAV_ITEMS = [
   { key: '/', label: '首页', icon: <HomeOutlined /> },
   { key: '/meditation', label: '冥想', icon: <CloudOutlined /> },
   { key: '/tts', label: 'TTS', icon: <SoundOutlined /> },
-  { key: '/bgm', label: 'BGM（后续开放）', icon: <CustomerServiceOutlined /> },
+  { key: '/bgm', label: 'BGM', icon: <CustomerServiceOutlined /> },
   { key: '/mixdown', label: '混音（后续开放）', icon: <SlidersOutlined /> },
   { key: '/library', label: '产物库', icon: <FolderOutlined /> },
   { key: '/settings', label: '设置', icon: <SettingOutlined /> },
@@ -33,7 +33,7 @@ export default function AppLayout() {
   const { pathname } = useLocation()
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout className="app-shell">
       <Layout.Sider width={232} theme="dark" className="app-sider">
         <div className="app-brand">
           <span className="app-brand-logo">音</span>
@@ -51,8 +51,8 @@ export default function AppLayout() {
           style={{ borderInlineEnd: 'none', paddingTop: 8 }}
         />
       </Layout.Sider>
-      <Layout>
-        <Layout.Content style={{ padding: 24 }}>
+      <Layout className="app-main">
+        <Layout.Content className="app-content">
           <StatusBanner />
           <Outlet />
         </Layout.Content>

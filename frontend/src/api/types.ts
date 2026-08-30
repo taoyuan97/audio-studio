@@ -338,20 +338,53 @@ export interface SubmitMixdownJobRequest {
 
 // ---------- 设置线 ----------
 
+export type SettingsProviderId =
+  | 'llm_deepseek'
+  | 'llm_qwen'
+  | 'llm_moonshot'
+  | 'tts_aliyun'
+  | 'tts_volc'
+  | 'minimax'
+
 export interface ProviderStatus {
   configured: boolean
-  key_masked: string | null
+  credential_masked: string | null
+  credential_source: 'runtime' | 'env' | 'mixed' | null
+  editable: boolean
+  runtime_credential_fields: Array<'credential' | 'app_id' | 'access_token'>
   model_id?: string
 }
 
 /** GET /api/settings/status */
 export interface SettingsStatus {
-  providers: Record<string, ProviderStatus>
+  revision: number
+  providers: Record<SettingsProviderId, ProviderStatus>
+  runtime: {
+    llm_timeout_seconds: number
+    minimax_timeout_seconds: number
+  }
   ffmpeg: {
     available: boolean
-    version: string
+    version: string | null
+    ffprobe_available: boolean
   }
   fake_mode: boolean
+}
+
+export interface ProviderUpdateResponse {
+  revision: number
+  provider: ProviderStatus
+}
+
+export interface CredentialRevealResponse {
+  revision: number
+  field: 'credential' | 'app_id' | 'access_token'
+  value: string
+}
+
+export interface RuntimeUpdateResponse {
+  revision: number
+  runtime: SettingsStatus['runtime']
 }
 
 /** POST /api/settings/probe/{provider} */

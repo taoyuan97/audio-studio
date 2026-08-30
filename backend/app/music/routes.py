@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from ..config import Settings
+from ..config import Settings, SettingsStore
 from ..database import NotFoundError, Repository, new_id, now_ms
 from ..errors import ApiError, conflict, invalid
 from ..runs import RunCancelledError, RunContext
@@ -92,7 +92,7 @@ def _snapshot(payload: MusicJobRequest) -> dict:
 @router.post("/jobs", status_code=202)
 async def submit_job(payload: MusicJobRequest, request: Request):
     repo: Repository = request.app.state.repository
-    settings: Settings = request.app.state.settings
+    settings: Settings = request.app.state.settings_store.current
     snapshot = _snapshot(payload)
     if not settings.fake_mode and not settings.minimax_api_key:
         raise ApiError("MUSIC_AUTH_FAILED", "未配置 MiniMax API Key", 502)
@@ -195,8 +195,9 @@ async def _download(ctx: RunContext, url: str, destination: Path) -> None:
         part.unlink(missing_ok=True)
 
 
-def make_music_handler(repo: Repository, settings: Settings, audio_dir: Path):
+def make_music_handler(repo: Repository, settings_store: SettingsStore, audio_dir: Path):
     async def handle(ctx: RunContext) -> str:
+        settings = settings_store.current
         run = repo.get_run(ctx.run_id)
         stored = run.get("result") or {}
         snapshot = stored.get("request")

@@ -1,8 +1,5 @@
 import type { Artifact, ArtifactType } from '../../api/types'
 
-export const SUPPORTED_ARTIFACT_TYPES = ['script_meditation', 'voice'] as const
-export type SupportedArtifactType = (typeof SUPPORTED_ARTIFACT_TYPES)[number]
-
 export const ARTIFACT_TYPE_META: Record<ArtifactType, { label: string; color: string }> = {
   script_meditation: { label: '冥想脚本', color: 'cyan' },
   voice: { label: 'TTS 人声', color: 'purple' },
@@ -23,10 +20,16 @@ const PARAM_LABELS: Record<string, string> = {
   pitch: '音调',
   script_artifact_id: '来源脚本 ID',
   format: '格式',
-}
-
-export function isSupportedArtifact(artifact: Artifact): artifact is Artifact & { type: SupportedArtifactType } {
-  return SUPPORTED_ARTIFACT_TYPES.some((type) => type === artifact.type)
+  prompt: '创作描述',
+  target_duration: '目标时长（秒）',
+  structure_hints: '结构倾向',
+  source_duration: '源音乐时长（秒）',
+  voice_artifact_id: '人声产物 ID',
+  bgm_artifact_id: '背景音产物 ID',
+  voice_gain: '人声增益',
+  bgm_gain: '背景增益',
+  bgm_offset: '背景偏移（秒）',
+  ducking: '人声闪避',
 }
 
 export function formatArtifactTime(timestamp: number): string {
@@ -67,7 +70,19 @@ export function artifactSummary(artifact: Artifact): string {
       artifact.audio ? formatSeconds(artifact.audio.duration) : null,
     ].filter(Boolean).join(' · ')
   }
-  return ''
+  if (artifact.type === 'bgm') {
+    return [
+      valueOf(artifact.params, 'prompt'),
+      artifact.audio?.format.toUpperCase(),
+      artifact.audio ? formatSeconds(artifact.audio.duration) : null,
+    ].filter(Boolean).join(' · ')
+  }
+  return [
+    valueOf(artifact.params, 'voice_artifact_id') ? '含人声' : null,
+    valueOf(artifact.params, 'bgm_artifact_id') ? '含背景音' : null,
+    artifact.audio?.format.toUpperCase(),
+    artifact.audio ? formatSeconds(artifact.audio.duration) : null,
+  ].filter(Boolean).join(' · ')
 }
 
 export function artifactParamRows(artifact: Artifact): Array<[string, string]> {

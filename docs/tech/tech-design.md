@@ -2,9 +2,11 @@
 
 ## 1. 文档信息
 
-- 版本：v1.7
-- 状态：设计已确认、部分实施（T001–T003 已完成；T004 阿里云技术验收通过、火山延期；T005 实现完成、真实 MiniMax smoke 因 Key/账号权限阻塞；T006–T008 待实施）
+- 版本：v1.9
+- 状态：设计已确认、部分实施（T001–T003 已完成；T004 阿里云技术验收通过、火山延期；T005 已实现、真实 MiniMax smoke 因 Key/账号权限阻塞；T006 待实施；T007 除完整混音闭环外已实现；T008 待实施）
 - 创建日期：2026-08-26
+- 变更记录：v1.9 增加仅限浏览器运行时凭据的按字段回显；`.env`/MiniMax 禁止回显，火山 App ID 与 Token 独立展示
+- 变更记录：v1.8 扩展 T007 设置线：五类服务凭据与模型参数支持浏览器持久化和免重启热生效；MiniMax Key 仍只读
 - 变更记录：v1.7 增加 T009 冥想消息 Markdown/TXT 参考附件、SQLite 持久化及 LLM 上下文预算设计
 - 变更记录：v1.6 按 MiniMax Music 3.0 官方能力校准 T005：取消正式 style 枚举、自由 prompt 为核心、structure_hints 降级为非确定性提示，并引入 Provider 中立适配边界与脱敏重试能力
 - 变更记录：v1.5 记录阿里云真实验证结果：`qwen-audio-3.0-tts-plus` instruction=true、SSML=false、pitch=false，停顿改走本地静音；FFmpeg 9.0.1 安装并修复 Windows `ffprobe.exe` 同目录探测；火山鉴权验证延期
@@ -86,7 +88,7 @@
 | 音色库（D4） | 官方音色列表硬编码后端配置，支持试听（按引擎+音色缓存） |
 | 纯音乐（D2） | 并入 BGM 模块；混音页支持仅背景轨导出 |
 | 闪避（D1） | 仅模式 B「人声时压低」，带开关；单轨组合自动失效 |
-| API Key（D3） | 后端 `.env`（同 article-studio）；设置页只读掩码展示 + 连通性测试 |
+| API Key（D3，已修订） | `.env` 提供初始值，浏览器可为 DeepSeek/千问/Kimi/阿里云 TTS/火山 TTS 写入本机运行时覆盖并热生效；仅运行时覆盖可按字段回显，`.env`/MiniMax Key 不可回显 |
 | 范围裁剪（C1/C2） | 敏感词过滤、用量统计/预算告警砍掉 |
 | 分期（C4） | 一期：冥想 + TTS + 混音（P0）、BGM（P1）；播客二期 |
 | 生产部署 | FastAPI 托管 `frontend/dist`，单进程（uvicorn），`SERVE_FRONTEND` 开关 |
@@ -202,7 +204,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
   - 通义千问（`qwen-plus`，DashScope OpenAI 兼容模式）
   - Kimi（`kimi-k2-0905-preview`，`api.moonshot.cn/v1`）
   - 模型列表**仅返回已配置 Key 的可用项**（`FAKE_MODE` 返回全量），前端下拉只展示可用模型；发送时后端仍校验 `SCRIPT_LLM_NOT_CONFIGURED` 作兜底；`FAKE_MODE` 时返回内置示例脚本的伪流。
-  - 三家实际模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 配置，必须非空且互不重复；工作台下拉只显示实际模型 ID。修改 `.env` 后重启生效，历史版本中的旧 ID 不迁移。
+  - 三家实际模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 提供初始值，必须非空但允许跨 provider 重复；运行时覆盖保存后重建注册表，工作台下拉立即显示新模型 ID。历史消息/产物中的旧 ID 不迁移。
 - **`app/script/prompts.py`**：冥想专用 Prompt 模板——角色设定 + 标记规范（`[停顿 Ns]`/`[情绪:x]`/`[语速:x]`/`[吸气]`/`[呼气]`）+ 结构要求（引导进入→主体→收尾）+ 时长-篇幅映射（5/10/15/20/25/30min≈1200/2200/3200/4200/5100/6000 字，含停顿折算）。
 - **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`{kind: speech|pause, text?, emotion?, speed?, seconds?}`）+ 预估时长（语速档 × 字数 + 停顿求和）。生成完成与 PATCH 编辑时均执行，随产物存储，前端直接渲染徽章与时间轴，**不在 TS 重复实现解析**。
 - **会话流**：POST messages → 同事务写用户消息与 `.md` / `.txt` 参考附件 → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 assistant message + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
@@ -254,11 +256,21 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 
 ### 5.9 设置线设计
 
-- `GET /api/settings/status`：各 provider 是否已配置（Key 存在性 + 掩码预览，如 `sk-***abc`；LLM 与阿里云 TTS 同时返回只读实际 model_id）、ffmpeg/ffprobe 版本与可用性、FAKE_MODE 状态。
-- `POST /api/settings/probe/{provider}`：轻量真实探测——llm（列模型/一次补全）、aliyun_tts / volc_tts（合成一句短音频即弃）、minimax（余额或提交探测）、ffmpeg（版本）。返回 `{ok, latency_ms, message}`。
-- Key 只读：编辑须改 `.env` 并重启，设置页文案说明。
+- `SettingsStore` 是进程内配置单一入口：启动时合并默认值、`.env` 与 `DATA_DIR/settings.json`，优先级为运行时文件 > `.env` > 默认值；持久化采用同目录临时文件 + `os.replace` 原子替换。
+- `GET /api/settings/status`：返回配置 revision、各 provider 的 configured/掩码/来源及可编辑模型参数，同时返回 ffmpeg/ffprobe、FAKE_MODE 等只读环境状态；任何响应均不含完整凭据。
+- `PATCH /api/settings/providers/{provider}`：支持 `llm_deepseek|llm_qwen|llm_moonshot|tts_aliyun|tts_volc` 的凭据和模型参数更新；`minimax` 拒绝 Key 写入。密码字段未传表示保留，显式清除走独立 credentials 删除端点。
+- `PATCH /api/settings/runtime`：更新 `llm_timeout_seconds`、`minimax_timeout_seconds`；其他本地环境参数不开放写入。
+- `DELETE /api/settings/providers/{provider}/credentials`：删除浏览器运行时凭据覆盖；若 `.env` 有值则立即回退并在 status 中显示 `source=env`。
+- `POST /api/settings/providers/{provider}/credentials/reveal`：以 revision + 单字段读取 `SettingsStore._overrides`，不读取合并后的 Settings，因而不会回退或泄露 `.env`；成功响应禁止缓存，并复用本机 Origin 校验。火山 App ID/Token 分字段请求，页面自动读取 App ID 不会同时下发 Token。
+- 前端完整凭据只保存在 ProviderCard 组件状态：默认隐藏，点击显示；保存成功与卸载时释放，不进入 React Query/Web Storage/URL。火山 App ID 为普通输入常显，Access Token 使用独立密码输入。
+- 写接口携带 revision 做乐观并发控制；校验并原子落盘成功后才替换内存快照。保存和真实连通测试分离，探测失败不回滚配置。
+- `POST /api/settings/probe/{provider}`：轻量真实探测——LLM（一次极短补全）、TTS（合成一句短音频即弃）、MiniMax（调用官方 `GET /v1/models`，不触发音乐生成计费）、ffmpeg（版本）。FAKE_MODE 不改变 probe 的真实探测语义。
+- 免重启生效边界：已运行任务保留启动时快照；排队中尚未执行及保存后新提交的任务在开始执行时读取最新快照。LLM registry、TTS/BGM handler 不得永久捕获启动时配置。
+- 安全边界为绑定 `127.0.0.1` 的本机可信用户：写接口执行同源/Origin 校验，不在本任务引入登录鉴权；若未来开放局域网或公网访问，必须先增加管理员认证。
 
 ### 5.10 环境配置
+
+以下环境变量作为初始值和运行时覆盖的回退值。浏览器可编辑项保存到 `DATA_DIR/settings.json` 后立即覆盖对应环境值；删除运行时覆盖则回退，无需重启。MiniMax Key、FFmpeg、DATA_DIR、FAKE_MODE、SERVE_FRONTEND 仍只能通过环境配置。
 
 ```dotenv
 # LLM（剧本生成）

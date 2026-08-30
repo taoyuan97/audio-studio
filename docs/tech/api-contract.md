@@ -2,9 +2,11 @@
 
 ## 1. 文档信息
 
-- 版本：v1.7
+- 版本：v1.9
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v1.9 增加 T007 浏览器运行时凭据按字段回显；`.env`/MiniMax 禁止回显，火山 App ID 与 Access Token 独立处理
+- 变更记录：v1.8 扩展 T007 设置 API：五类服务凭据/模型参数浏览器写入、revision 并发控制与免重启热生效；MiniMax Key 仍只读
 - 变更记录：v1.7 增加 T009 冥想消息 `.md` / `.txt` 参考附件、持久化、重试与 LLM 上下文预算契约
 - 变更记录：v1.6 按 MiniMax Music 3.0 官方能力校准 T005：取消正式 style 枚举，以自由 prompt 为核心；structure_hints 为非确定性提示；补充 Provider 能力、24h URL 与脱敏 music_retry 契约
 - 变更记录：v1.5 按阿里云真实验证修正默认 Qwen-TTS 能力：instruction=true、SSML=false、pitch=false；T004 状态改为阿里云技术验收通过、火山延期
@@ -27,7 +29,7 @@
 | 第 7 节 | TTS | 已实现；阿里云技术验收通过，火山延期 | T004 |
 | 第 8 节 | BGM | 已实现；真实 MiniMax smoke 因 Key/账号权限阻塞 | T005 |
 | 第 9 节 | 混音 | 仅确认设计，端点尚未实现 | T006 |
-| 第 10 节 | 设置状态与探测 | 仅确认设计，端点尚未实现 | T007 |
+| 第 10 节 | 设置状态、浏览器编辑与探测 | 已实现 | T007 |
 | 第 11 节 | 通用 run、剧本、TTS 与 BGM 事件已实现；混音事件待实现 | 部分实现 | T002–T006 |
 | 第 12 节 | 错误码目标全集；随对应业务任务逐步实现 | 部分实现 | T002–T007 |
 
@@ -215,7 +217,7 @@
 
 - 字段：`provider`（deepseek/qwen/moonshot）/ `model`（对应 `*_MODEL_ID` 的实际值，也是发送消息时的 `model` 取值）/ `name`（兼容保留的服务展示名；工作台下拉只显示 `model`）。
 - 注册模型与配置对应：`DEEPSEEK_MODEL_ID`←`DEEPSEEK_API_KEY`、`DASHSCOPE_MODEL_ID`←`DASHSCOPE_API_KEY`、`MOONSHOT_MODEL_ID`←`MOONSHOT_API_KEY`；缺省模型 ID 分别为 `deepseek-chat`、`qwen-plus`、`kimi-k2-0905-preview`。
-- 三项模型 ID 必须非空且互不重复；配置错误时后端启动失败并指出字段。修改 `.env` 后须重启后端。
+- 三项模型 ID 必须非空，允许不同 provider 使用相同 ID；浏览器运行时配置保存后无需重启，后续模型列表请求立即返回新值。
 - 兜底：页面加载后 Key 配置发生变化时，发送接口仍返回 422 `SCRIPT_LLM_NOT_CONFIGURED`。
 
 ### 4.9 PATCH /api/conversations/{id}/script-draft
@@ -328,27 +330,33 @@ SSE 事件流（协议见第 11 节）。
 
 - 响应 200：`{ "deleted": true }`
 
-### 6.5 GET /api/artifacts/{id}/audio
+### 6.5 DELETE /api/artifacts
+
+清空全部产物；二次确认由前端负责。脚本版本随外键级联删除，音频文件与峰值缓存逐项清理。
+
+- 响应 200：`{ "deleted": 12 }`，数字为本次删除的产物数。
+
+### 6.6 GET /api/artifacts/{id}/audio
 
 音频文件流。
 
 - 响应 200：`audio/mpeg` 或 `audio/wav`；支持 HTTP Range（`<audio>` seek 依赖）。
 - 404：`ARTIFACT_NOT_FOUND` / `ARTIFACT_NO_AUDIO`（脚本类型）。
 
-### 6.6 GET /api/artifacts/{id}/versions
+### 6.7 GET /api/artifacts/{id}/versions
 
 脚本不可变版本列表，按 version_no 倒序；草稿不在此列表。
 
 - 响应 200：`{ "items": [{ "id": "ver_...", "artifact_id": "art_...", "version_no": 2, "params": {}, "content": {}, "created_at": 0 }] }`。
 
-### 6.7 POST /api/artifacts/{id}/versions/{version_id}/restore-draft
+### 6.8 POST /api/artifacts/{id}/versions/{version_id}/restore-draft
 
 把历史版本复制为会话工作草稿，不改变 artifact 当前版本。
 
 - 请求：`{ "expected_revision": 4 }`
 - 响应 200：更新后的 script_draft（`origin: "restored"`）。
 - 后续手动保存会追加新版本，不重写历史。
-### 6.8 GET /api/artifacts/{id}/peaks
+### 6.9 GET /api/artifacts/{id}/peaks
 
 波形峰值 JSON（首次计算并缓存）。
 
@@ -522,31 +530,73 @@ SSE 事件流（协议见第 11 节）。
 
 ### 10.1 GET /api/settings/status
 
-配置状态（只读，D3）。
+读取脱敏配置状态、可编辑参数与只读环境状态。本端点不返回完整凭据。
 
 - 响应 200：
 
 ```json
 {
+  "revision": 3,
   "providers": {
-    "llm_deepseek": { "configured": true, "key_masked": "sk-***cdef", "model_id": "deepseek-chat" },
-    "llm_qwen": { "configured": true, "key_masked": "sk-***ab12", "model_id": "qwen-plus" },
-    "llm_moonshot": { "configured": false, "key_masked": null, "model_id": "kimi-k2-0905-preview" },
-    "tts_aliyun": { "configured": true, "key_masked": "sk-***9x8y", "model_id": "qwen-audio-3.0-tts-plus" },
-    "tts_volc": { "configured": false, "key_masked": null },
-    "minimax": { "configured": true, "key_masked": "eyJ***jk4" }
+    "llm_deepseek": { "configured": true, "credential_masked": "sk-***cdef", "credential_source": "runtime", "runtime_credential_fields": ["credential"], "model_id": "deepseek-chat", "editable": true },
+    "llm_qwen": { "configured": true, "credential_masked": "sk-***ab12", "credential_source": "env", "runtime_credential_fields": [], "model_id": "qwen-plus", "editable": true },
+    "llm_moonshot": { "configured": false, "credential_masked": null, "credential_source": null, "runtime_credential_fields": [], "model_id": "kimi-k2-0905-preview", "editable": true },
+    "tts_aliyun": { "configured": true, "credential_masked": "sk-***9x8y", "credential_source": "runtime", "runtime_credential_fields": ["credential"], "model_id": "qwen-audio-3.0-tts-plus", "editable": true },
+    "tts_volc": { "configured": true, "credential_masked": "123***3456 / tok***5678", "credential_source": "mixed", "runtime_credential_fields": ["app_id"], "editable": true },
+    "minimax": { "configured": true, "credential_masked": "eyJ***jk4", "credential_source": "env", "runtime_credential_fields": [], "editable": false }
   },
+  "runtime": { "llm_timeout_seconds": 120, "minimax_timeout_seconds": 600 },
   "ffmpeg": { "available": true, "version": "ffmpeg version 7.0 ...", "ffprobe_available": true },
   "fake_mode": false
 }
 ```
 
-### 10.2 POST /api/settings/probe/{provider}
+`credential_source` 为 `runtime | env | mixed | null`；火山 App ID/Token 分别来自运行时与环境时为 `mixed`。`runtime_credential_fields` 只列出实际保存于 `settings.json`、允许回显的前端字段名，不含值。`editable=false` 表示该 provider 凭据不可通过浏览器写入。
+
+### 10.2 PATCH /api/settings/providers/{provider}
+
+保存 provider 配置。`provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | tts_aliyun | tts_volc`；MiniMax 不属于本端点的可写集合。
+
+- 请求示例（LLM/阿里云 TTS）：
+
+```json
+{ "revision": 3, "credential": "sk-new", "model_id": "deepseek-chat" }
+```
+
+- 请求示例（火山 TTS）：
+
+```json
+{ "revision": 3, "app_id": "123456", "access_token": "token-new" }
+```
+
+- 凭据字段未传表示保留当前值；空字符串非法，不承担清除语义。
+- `model_id` 去除首尾空白后必须非空，不要求跨 provider 唯一。
+- 校验和原子持久化全部成功后更新内存快照，响应 200 为新的脱敏 provider 状态及递增后的 revision。
+- revision 过期返回 409 `SETTINGS_REVISION_CONFLICT`；不支持的 provider/字段返回 422 `SETTINGS_PARAMS_INVALID`。
+
+### 10.3 DELETE /api/settings/providers/{provider}/credentials
+
+请求体 `{ "revision": 3 }`。删除该 provider 在 `settings.json` 中保存的凭据（火山同时删除运行时 App ID/Token）；环境变量存在时立即回退到环境值，否则变为未配置。模型 ID 运行时覆盖不随凭据删除。
+
+### 10.4 POST /api/settings/providers/{provider}/credentials/reveal
+
+仅回显浏览器保存的单个凭据字段。请求体为 `{ "revision": 3, "field": "credential" }`；火山字段使用 `app_id | access_token`，其余可写 provider 使用 `credential`。
+
+- 成功响应：`{ "revision": 3, "field": "credential", "value": "sk-full-value" }`，并设置 `Cache-Control: no-store`。
+- `.env` 基线值、未通过浏览器保存的字段、MiniMax、未知 provider 或字段错配一律返回 422，响应和错误信息不得包含完整值。
+- revision 过期返回 409；接口执行与写接口相同的本机 Origin 校验。
+- 前端不得把响应写入 localStorage、sessionStorage、URL 或 Query 缓存；组件卸载及保存成功时清除内存明文。
+
+### 10.5 PATCH /api/settings/runtime
+
+请求体可包含 `llm_timeout_seconds`（1–600）和 `minimax_timeout_seconds`（30–1200），并必须包含 revision。至少提供一个待修改字段；其余环境参数不可写。响应 200 返回更新后的 `runtime` 与 revision。
+
+### 10.6 POST /api/settings/probe/{provider}
 
 连通性测试（真实轻量探测）。
 
-- `provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | aliyun_tts | volc_tts | minimax | ffmpeg`。
-- `aliyun_tts` 的配置状态与探测只使用 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`；未配置独立 TTS Key 时，即使 `DASHSCOPE_API_KEY` 已配置也返回未配置。
+- `provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | tts_aliyun | tts_volc | minimax | ffmpeg`，与 status/update 命名一致。
+- `tts_aliyun` 的配置状态与探测只使用 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`；未配置独立 TTS Key 时，即使 `DASHSCOPE_API_KEY` 已配置也返回未配置。
 - 响应 200（探测本身 200，结果在体内）：
 
 ```json
@@ -554,6 +604,8 @@ SSE 事件流（协议见第 11 节）。
 ```
 
 - 未配置 → `{ "ok": false, "latency_ms": 0, "message": "未配置 API Key" }`（仍 200）。
+- 保存与探测相互独立；探测失败不回滚配置。即使 `FAKE_MODE=true`，probe 仍是明确的真实第三方服务调用。
+- 热生效语义：已运行任务使用开始执行时取得的配置快照；排队未执行任务及保存后新任务在开始执行时读取最新配置。
 
 ## 11. SSE 事件协议
 
@@ -635,6 +687,10 @@ SSE 事件流（协议见第 11 节）。
 | `MIX_INPUT_INVALID` | 422 | 轨道 id 不存在/类型错误 | 刷新下拉 |
 | `MIX_FFMPEG_MISSING` | 503 | ffmpeg/ffprobe 不可用 | 引导去设置页查看安装指引 |
 | `MIX_FFMPEG_ERROR` | 500 | ffmpeg 执行失败（脱敏） | 失败卡片+重试 |
+| `SETTINGS_PARAMS_INVALID` | 422 | provider、字段或参数范围非法；包含 MiniMax Key 写入尝试 | 保留表单并定位字段 |
+| `SETTINGS_REVISION_CONFLICT` | 409 | 配置已被其他页面更新 | 刷新状态后重试 |
+| `SETTINGS_PERSIST_FAILED` | 500 | 运行时配置原子持久化失败，旧配置保持有效 | 提示检查 DATA_DIR 权限后重试 |
+| `SETTINGS_ORIGIN_FORBIDDEN` | 403 | 配置写请求不是允许的本机同源来源 | 阻止写入并提示仅限本机使用 |
 | `ARTIFACT_NOT_FOUND` | 404 | 产物不存在 | 返回列表 |
 | `ARTIFACT_NO_AUDIO` | 404 | 脚本产物请求音频 | 前端不应发起 |
 | `ARTIFACT_NOT_EDITABLE` | 422 | 音频产物带 content 编辑 | 前端不应发起 |

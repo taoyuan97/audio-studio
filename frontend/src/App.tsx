@@ -1,11 +1,12 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
-import PagePlaceholder from './components/PagePlaceholder'
 import AppLayout from './layouts/AppLayout'
 import FocusLayout from './layouts/FocusLayout'
 import DashboardPage from './pages/DashboardPage'
+import BgmPage from './pages/BgmPage'
 import LibraryPage from './pages/LibraryPage'
 import MeditationListPage from './pages/MeditationListPage'
 import MeditationWorkspacePage from './pages/MeditationWorkspacePage'
+import MixdownPage from './pages/MixdownPage'
 import SettingsPage from './pages/SettingsPage'
 import TtsPage from './pages/TtsPage'
 
@@ -17,8 +18,8 @@ export default function App() {
         <Route index element={<DashboardPage />} />
         <Route path="meditation" element={<MeditationListPage />} />
         <Route path="tts" element={<TtsPage />} />
-        <Route path="bgm" element={<PagePlaceholder title="BGM" description="BGM 功能当前阻塞，后续开放" />} />
-        <Route path="mixdown" element={<PagePlaceholder title="混音" description="混音功能依赖 BGM，后续开放" />} />
+        <Route path="bgm" element={<BgmPage />} />
+        <Route path="mixdown" element={<MixdownPage />} />
         <Route path="library" element={<LibraryPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

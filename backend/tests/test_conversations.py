@@ -122,7 +122,11 @@ class TestMessages:
         roles = [item["role"] for item in body["items"]]
         assert roles == ["user", "assistant"]
         user_msg = body["items"][0]
-        assert user_msg["params"] == {"duration": 5, "model": "deepseek-chat"}
+        assert user_msg["params"] == {
+            "duration": 5,
+            "model": "deepseek-chat",
+            "provider": "deepseek",
+        }
         assert user_msg["attachments"] == []
         assistant_msg = body["items"][1]
         assert assistant_msg["params"] is None

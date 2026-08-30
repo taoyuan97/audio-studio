@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from .config import Settings
+from .config import Settings, SettingsStore
 from .database import (
     DuplicateVersionError,
     NotFoundError,
@@ -94,7 +94,11 @@ def _repo(request: Request) -> Repository:
 
 
 def _registry(request: Request) -> ModelRegistry:
-    return request.app.state.llm_registry
+    return ModelRegistry(request.app.state.settings_store.current)
+
+
+def _settings(request: Request) -> Settings:
+    return request.app.state.settings_store.current
 
 
 def _get_conversation(request: Request, conversation_id: str) -> dict[str, Any]:
@@ -106,11 +110,13 @@ def _get_conversation(request: Request, conversation_id: str) -> dict[str, Any]:
 
 def _validate_script_params(
     registry: ModelRegistry, settings: Settings, duration: int, model: str
-) -> None:
-    if duration not in SCRIPT_DURATIONS or registry.get(model) is None:
+) -> str:
+    entry = registry.get(model)
+    if duration not in SCRIPT_DURATIONS or entry is None:
         raise invalid("SCRIPT_PARAMS_INVALID", "时长或模型参数非法")
     if not settings.fake_mode and not registry.is_configured(model):
         raise invalid("SCRIPT_LLM_NOT_CONFIGURED", "该模型未配置 API Key")
+    return entry.provider
 
 
 def _message_payload(message: dict[str, Any]) -> dict[str, Any]:
@@ -246,8 +252,8 @@ async def send_message(
     if not text.strip() or len(text) > MAX_TEXT_LENGTH:
         raise invalid("SCRIPT_TEXT_INVALID", "消息文本为空或超出长度限制")
     attachments = _validate_attachments(payload.attachments)
-    _validate_script_params(
-        _registry(request), request.app.state.settings, payload.duration, payload.model
+    provider = _validate_script_params(
+        _registry(request), _settings(request), payload.duration, payload.model
     )
     manager = request.app.state.runs
     if manager.active_run_id_for_conversation(conversation_id):
@@ -269,7 +275,7 @@ async def send_message(
         conversation_id,
         "user",
         text,
-        params={"duration": payload.duration, "model": payload.model},
+        params={"duration": payload.duration, "model": payload.model, "provider": provider},
         attachments=attachments,
     )
     repo.touch_conversation(conversation_id)
@@ -385,12 +391,12 @@ def save_script_version(
 # ---------------- script run handler ----------------
 
 
-def make_script_handler(
-    repo: Repository, settings: Settings, registry: ModelRegistry
-):
+def make_script_handler(repo: Repository, settings_store: SettingsStore):
     """构造 script 线 run handler（main.py lifespan 注册）。"""
 
     async def handle(ctx: RunContext) -> str:
+        settings = settings_store.current
+        registry = ModelRegistry(settings)
         run = repo.get_run(ctx.run_id)
         conversation_id = run["conversation_id"]
         conversation = repo.get_conversation(conversation_id)
@@ -407,6 +413,11 @@ def make_script_handler(
         params = last_user["params"] or {}
         duration = params.get("duration", 15)
         model = params.get("model", "deepseek-chat")
+        if provider := params.get("provider"):
+            current_entry = registry.get_by_provider(provider)
+            if current_entry is None:
+                raise invalid("SCRIPT_PARAMS_INVALID", "模型服务已不可用")
+            model = current_entry.model
 
         llm_messages = _assemble_llm_messages(
             history,

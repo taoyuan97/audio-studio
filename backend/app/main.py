@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .artifacts import router as artifacts_router
-from .config import Settings
+from .config import Settings, SettingsStore
 from .conversations import make_script_handler, router as conversations_router
 from .database import NotFoundError, Repository
 from .demo import demo_handler, router as demo_router
@@ -26,6 +26,7 @@ from .errors import ApiError, api_error_handler, http_error_handler
 from .llm.registry import ModelRegistry
 from .music.routes import make_music_handler, router as music_router
 from .runs import TERMINAL_EVENTS, RunManager
+from .settings import router as settings_router
 from .tts.routes import make_tts_handler, router as tts_router
 
 logger = logging.getLogger(__name__)
@@ -68,19 +69,24 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
         if interrupted:
             logger.warning("启动恢复：%s 个遗留 run 标记为 RUN_INTERRUPTED", interrupted)
         manager = RunManager(repository, audio_dir=audio_dir)
-        llm_registry = ModelRegistry(resolved_settings)
+        settings_store = SettingsStore(
+            resolved_settings, resolved_data_dir / "settings.json"
+        )
+        current_settings = settings_store.current
+        llm_registry = ModelRegistry(current_settings)
         manager.register("demo", demo_handler)
         manager.register(
-            "script", make_script_handler(repository, resolved_settings, llm_registry)
+            "script", make_script_handler(repository, settings_store)
         )
         manager.register(
-            "tts", make_tts_handler(repository, resolved_settings, audio_dir)
+            "tts", make_tts_handler(repository, settings_store, audio_dir)
         )
         manager.register(
-            "music", make_music_handler(repository, resolved_settings, audio_dir)
+            "music", make_music_handler(repository, settings_store, audio_dir)
         )
         await manager.start()
-        application.state.settings = resolved_settings
+        application.state.settings = current_settings
+        application.state.settings_store = settings_store
         application.state.repository = repository
         application.state.runs = manager
         application.state.data_dir = resolved_data_dir
@@ -123,6 +129,7 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
     application.include_router(demo_router)
     application.include_router(tts_router)
     application.include_router(music_router)
+    application.include_router(settings_router)
 
     # ---------------- 通用端点 ----------------
 

@@ -107,6 +107,19 @@ class TestArtifacts:
         assert not peaks_file.exists()
         assert client.get(f"/api/artifacts/{voice['id']}").status_code == 404
 
+    def test_clear_all_removes_rows_audio_and_versions(
+        self, app: Starlette, client: TestClient
+    ):
+        voice = create_voice_artifact(app)
+        script = create_script_artifact(app)
+        audio_file = app.state.audio_dir / "artifacts" / f"{voice['id']}.wav"
+        response = client.delete("/api/artifacts")
+        assert response.status_code == 200
+        assert response.json() == {"deleted": 2}
+        assert client.get("/api/artifacts").json()["items"] == []
+        assert not audio_file.exists()
+        assert app.state.repository.list_artifact_versions(script["id"]) == []
+
 
 class TestArtifactAudio:
     def test_full_download(self, app: Starlette, client: TestClient):

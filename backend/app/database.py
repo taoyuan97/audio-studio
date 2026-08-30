@@ -549,7 +549,10 @@ class Repository:
                 """SELECT id, kind, status FROM runs
                    WHERE status IN ('queued','running') ORDER BY created_at ASC"""
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [
+            {"run_id": row["id"], "kind": row["kind"], "status": row["status"]}
+            for row in rows
+        ]
 
     def active_run_for_conversation(self, conversation_id: str) -> str | None:
         with self.connect() as connection:
@@ -961,6 +964,13 @@ class Repository:
                 "DELETE FROM artifacts WHERE id=?", (artifact_id,)
             )
             return cursor.rowcount > 0
+
+    def delete_all_artifacts(self) -> list[dict[str, Any]]:
+        """返回被删除快照，供路由在事务后清理对应音频/峰值文件。"""
+        with self.transaction() as connection:
+            rows = connection.execute("SELECT * FROM artifacts").fetchall()
+            connection.execute("DELETE FROM artifacts")
+        return [self._artifact_dict(row) for row in rows]
 
     @staticmethod
     def _artifact_dict(row: sqlite3.Row) -> dict[str, Any]:

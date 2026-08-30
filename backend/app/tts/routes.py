@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from ..config import Settings
+from ..config import Settings, SettingsStore
 from ..database import NotFoundError, Repository, new_id
 from ..errors import ApiError, conflict, invalid, not_found
 from ..ffmpeg import FFmpegError
@@ -50,7 +50,7 @@ def _engine_payload(settings: Settings, engine: str) -> dict:
 
 @router.get("/defaults")
 def defaults(request: Request):
-    settings: Settings = request.app.state.settings
+    settings: Settings = request.app.state.settings_store.current
     return {
         "engines": [_engine_payload(settings, "aliyun"), _engine_payload(settings, "volc")],
         "scene_presets": SCENE_PRESETS,
@@ -80,7 +80,7 @@ async def _synthesize_one(settings: Settings, engine: str, text: str, **kwargs) 
 
 @router.get("/voices/{engine}/{voice_id}/preview")
 async def preview(engine: str, voice_id: str, request: Request):
-    settings: Settings = request.app.state.settings
+    settings: Settings = request.app.state.settings_store.current
     _model, _voice = _validate_engine(settings, engine, voice_id, None)
     cache = request.app.state.audio_dir / "previews" / f"{engine}_{voice_id}.wav"
     if not cache.is_file():
@@ -107,7 +107,7 @@ async def preview(engine: str, voice_id: str, request: Request):
 @router.post("/jobs", status_code=202)
 async def submit_job(payload: TTSJobRequest, request: Request):
     repo: Repository = request.app.state.repository
-    settings: Settings = request.app.state.settings
+    settings: Settings = request.app.state.settings_store.current
     if bool(payload.script_artifact_id) == bool(payload.text and payload.text.strip()):
         raise invalid("TTS_TEXT_EMPTY", "脚本产物与粘贴文本必须且只能提供一项")
     if payload.scene not in SCENE_PRESETS or payload.format not in ("mp3", "wav"):
@@ -166,12 +166,15 @@ async def submit_job(payload: TTSJobRequest, request: Request):
     return manager.run_payload(run)
 
 
-def make_tts_handler(repo: Repository, settings: Settings, audio_dir: Path):
+def make_tts_handler(repo: Repository, settings_store: SettingsStore, audio_dir: Path):
     async def handle(ctx: RunContext) -> str:
+        settings = settings_store.current
         run = repo.get_run(ctx.run_id)
         snapshot = (run.get("result") or {}).get("request")
         if not snapshot:
             raise ApiError("TTS_PARAMS_INVALID", "TTS 任务快照缺失", 422)
+        if snapshot["engine"] == "aliyun":
+            snapshot = {**snapshot, "model": settings.aliyun_tts_model_id}
         capabilities = get_capabilities(
             snapshot["engine"], snapshot["model"], snapshot["voice_id"]
         )

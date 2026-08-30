@@ -53,6 +53,26 @@ def list_artifacts(
     return {"items": _repo(request).list_artifacts(type=type, limit=limit)}
 
 
+@router.delete("")
+def clear_artifacts(request: Request):
+    artifacts = _repo(request).delete_all_artifacts()
+    for artifact in artifacts:
+        if not artifact["audio"]:
+            continue
+        candidates = (
+            _audio_dir(request)
+            / "artifacts"
+            / f"{artifact['id']}.{artifact['audio']['format']}",
+            _audio_dir(request) / "peaks" / f"{artifact['id']}.json",
+        )
+        for candidate in candidates:
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return {"deleted": len(artifacts)}
+
+
 @router.get("/{artifact_id}")
 def get_artifact(artifact_id: str, request: Request):
     return _get_artifact(request, artifact_id)
