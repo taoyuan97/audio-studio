@@ -2,7 +2,7 @@
 
 ## 1. 任务信息
 
-- 状态：阻塞（实现与自动化验收已完成；真实 MiniMax smoke 因 Key/账号权限问题延后，客服处理中）
+- 状态：已完成（实现、自动化验收与真实 MiniMax 生成验证均通过）
 - 优先级：P1
 - 类型：正式任务 5/8
 - 前置任务：T002
@@ -73,6 +73,8 @@ GET run（failed music）: music_retry:{download_available, expires_at} —— �
 - 手工（真实 Key）：smoke_music.py 真实生成 + 下载 + 后处理全链路一次。
 
 > 阻塞记录（2026-08-27）：已执行两次真实请求；首次返回 MiniMax 业务码 `2153`，更换 Key 后仍返回 `MUSIC_ACCESS_DENIED`。确认为 Key/账号准入问题，已咨询 MiniMax 客服；恢复前不再发起付费请求。
+>
+> 解除记录（2026-09-03）：MiniMax 已可正常生成音乐，真实生成链路验证通过，T005 阻塞解除。
 
 ## 7. 验收标准
 
@@ -81,4 +83,4 @@ GET run（failed music）: music_retry:{download_available, expires_at} —— �
 - [x] 失败重试两档：mock URL 有效 → 重新下载不调生成接口；URL 过期 → 引导 regenerate；regenerate 需二次确认。
 - [x] 取消中断等待，无残留文件；文案说明计费可能已发生。
 - [x] 契约与自动化测试通过。
-- [ ] `smoke_music.py --yes` 真实 MiniMax 调用通过（阻塞：Key/账号权限问题，客服处理中）。
+- [x] `smoke_music.py --yes` 真实 MiniMax 调用通过。

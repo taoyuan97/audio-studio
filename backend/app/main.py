@@ -25,6 +25,7 @@ from .demo import demo_handler, router as demo_router
 from .errors import ApiError, api_error_handler, http_error_handler
 from .llm.registry import ModelRegistry
 from .music.routes import make_music_handler, router as music_router
+from .mixdown import make_mixdown_handler, router as mixdown_router
 from .runs import TERMINAL_EVENTS, RunManager
 from .settings import router as settings_router
 from .tts.routes import make_tts_handler, router as tts_router
@@ -84,6 +85,9 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
         manager.register(
             "music", make_music_handler(repository, settings_store, audio_dir)
         )
+        manager.register(
+            "mixdown", make_mixdown_handler(repository, settings_store, audio_dir)
+        )
         await manager.start()
         application.state.settings = current_settings
         application.state.settings_store = settings_store
@@ -129,6 +133,7 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
     application.include_router(demo_router)
     application.include_router(tts_router)
     application.include_router(music_router)
+    application.include_router(mixdown_router)
     application.include_router(settings_router)
 
     # ---------------- 通用端点 ----------------

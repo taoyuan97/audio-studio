@@ -38,11 +38,13 @@ def client(app: Starlette) -> TestClient:
         yield test_client
 
 
-def write_wav(path: Path, seconds: float = 0.2, frequency: int = 220) -> None:
+def write_wav(
+    path: Path, seconds: float = 0.2, frequency: int = 220, sample_rate: int = 8000
+) -> None:
     """生成 16bit 单声道正弦 WAV（无外部依赖，供音频端点测试）。"""
     import math
 
-    rate = 8000
+    rate = sample_rate
     frames = int(seconds * rate)
     path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(path), "wb") as writer:

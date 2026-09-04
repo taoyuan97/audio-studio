@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
+from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -16,6 +19,28 @@ router = APIRouter(prefix="/api/artifacts", tags=["artifacts"])
 
 ARTIFACT_TYPES = ("script_meditation", "voice", "bgm", "mix")
 MEDIA_TYPES = {"mp3": "audio/mpeg", "wav": "audio/wav"}
+INVALID_FILENAME_CHARS = re.compile(r'[\x00-\x1f\x7f<>:"/\\|?*]')
+
+
+def _audio_download_filename(artifact: dict) -> str:
+    """生成适合本地文件系统的音频下载名。"""
+    name = INVALID_FILENAME_CHARS.sub("-", str(artifact.get("name") or ""))
+    name = name.strip().rstrip(". ") or "音频产物"
+    fmt = str((artifact.get("audio") or {}).get("format") or "wav").lower()
+    timestamp = datetime.now().astimezone().strftime("%m%d-%H%M")
+    return f"{name}-{timestamp}.{fmt}"
+
+
+def _audio_content_disposition(filename: str) -> str:
+    """同时提供 ASCII 回退和 RFC 5987 中文文件名。"""
+    fallback = filename.encode("ascii", errors="ignore").decode("ascii")
+    if fallback.startswith("-"):
+        fallback = f"audio{fallback}"
+    fallback = fallback or "audio"
+    return (
+        f'inline; filename="{fallback}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
 
 
 class ArtifactPatch(BaseModel):
@@ -158,6 +183,9 @@ def get_artifact_audio(artifact_id: str, request: Request, range_header: str | N
 
     file_size = audio_file.stat().st_size
     media_type = MEDIA_TYPES.get(fmt, "application/octet-stream")
+    content_disposition = _audio_content_disposition(
+        _audio_download_filename(artifact)
+    )
     range_value = request.headers.get("range")
 
     if range_value:
@@ -174,6 +202,7 @@ def get_artifact_audio(artifact_id: str, request: Request, range_header: str | N
                 "Content-Range": f"bytes {start}-{end}/{file_size}",
                 "Accept-Ranges": "bytes",
                 "Content-Length": str(length),
+                "Content-Disposition": content_disposition,
             },
         )
 
@@ -185,6 +214,7 @@ def get_artifact_audio(artifact_id: str, request: Request, range_header: str | N
         headers={
             "Accept-Ranges": "bytes",
             "Content-Length": str(file_size),
+            "Content-Disposition": content_disposition,
         },
     )
 

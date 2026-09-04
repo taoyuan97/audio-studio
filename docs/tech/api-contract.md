@@ -340,7 +340,7 @@ SSE 事件流（协议见第 11 节）。
 
 音频文件流。
 
-- 响应 200：`audio/mpeg` 或 `audio/wav`；支持 HTTP Range（`<audio>` seek 依赖）。
+- 响应 200：`audio/mpeg` 或 `audio/wav`；支持 HTTP Range（`<audio>` seek 依赖）。200/206 响应均通过 `Content-Disposition: inline` 提供下载文件名，格式为 `{产物名称}-{MMDD}-{HHmm}.{音频格式}`；名称中的文件系统非法字符会替换为 `-`。
 - 404：`ARTIFACT_NOT_FOUND` / `ARTIFACT_NO_AUDIO`（脚本类型）。
 
 ### 6.7 GET /api/artifacts/{id}/versions

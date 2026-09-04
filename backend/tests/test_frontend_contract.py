@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from urllib.parse import unquote
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
@@ -128,7 +131,62 @@ class TestArtifactAudio:
         assert response.status_code == 200
         assert response.headers["content-type"] == "audio/wav"
         assert response.headers["accept-ranges"] == "bytes"
+        filename = unquote(
+            response.headers["content-disposition"].split("filename*=UTF-8''", 1)[1]
+        )
+        assert re.fullmatch(r"测试人声-\d{4}-\d{4}\.wav", filename)
         assert len(response.content) > 0
+
+    @pytest.mark.parametrize(
+        ("artifact_type", "audio_format"),
+        [("voice", "wav"), ("bgm", "mp3"), ("mix", "mp3")],
+    )
+    def test_download_filename_for_audio_artifact_types(
+        self,
+        app: Starlette,
+        client: TestClient,
+        artifact_type: str,
+        audio_format: str,
+    ):
+        artifact = app.state.repository.insert_artifact(
+            type=artifact_type,
+            name="深海放松",
+            params={"format": audio_format},
+            audio_format=audio_format,
+            duration=0.2,
+        )
+        audio_file = (
+            app.state.audio_dir
+            / "artifacts"
+            / f"{artifact['id']}.{audio_format}"
+        )
+        audio_file.write_bytes(b"test audio")
+        app.state.repository.update_artifact_audio_path(
+            artifact["id"], f"artifacts/{artifact['id']}.{audio_format}"
+        )
+        response = client.get(f"/api/artifacts/{artifact['id']}/audio")
+
+        assert response.status_code == 200
+        filename = unquote(
+            response.headers["content-disposition"].split("filename*=UTF-8''", 1)[1]
+        )
+        assert re.fullmatch(
+            rf"深海放松-\d{{4}}-\d{{4}}\.{audio_format}", filename
+        )
+
+    def test_download_filename_replaces_unsafe_characters(
+        self, app: Starlette, client: TestClient
+    ):
+        voice = create_voice_artifact(app, name=' 冥想/夜晚\\舒缓:*?"<>|\x01. ')
+        response = client.get(f"/api/artifacts/{voice['id']}/audio")
+        filename = unquote(
+            response.headers["content-disposition"].split("filename*=UTF-8''", 1)[1]
+        )
+
+        assert filename.startswith("冥想-夜晚-舒缓")
+        assert not set('<>:"/\\|?*').intersection(filename)
+        assert "\x01" not in filename
+        assert re.search(r"-\d{4}-\d{4}\.wav$", filename)
 
     def test_range_request_partial(self, app: Starlette, client: TestClient):
         voice = create_voice_artifact(app)
@@ -138,6 +196,7 @@ class TestArtifactAudio:
         )
         assert response.status_code == 206
         assert response.headers["content-range"] == f"bytes 0-99/{len(full)}"
+        assert "filename*=UTF-8''" in response.headers["content-disposition"]
         assert len(response.content) == 100
 
     def test_range_open_ended(self, app: Starlette, client: TestClient):
