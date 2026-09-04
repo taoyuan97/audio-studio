@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # MiniMax Music
     minimax_api_key: str = ""
+    minimax_model_id: str = "music-3.0"
     minimax_timeout_seconds: int = Field(default=600, ge=30, le=1200)
 
     # 本地环境
@@ -52,6 +53,7 @@ class Settings(BaseSettings):
         "dashscope_model_id",
         "moonshot_model_id",
         "aliyun_tts_model_id",
+        "minimax_model_id",
         mode="before",
     )
     @classmethod
@@ -79,6 +81,7 @@ class SettingsStore:
         "llm_moonshot": ("moonshot_api_key", "moonshot_model_id"),
         "tts_aliyun": ("aliyun_tts_api_key", "aliyun_tts_model_id"),
         "tts_volc": ("volc_tts_app_id", "volc_tts_access_token"),
+        "minimax": ("minimax_api_key", "minimax_model_id"),
     }
     CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
         "llm_deepseek": ("deepseek_api_key",),
@@ -156,8 +159,6 @@ class SettingsStore:
         return self._commit(values, expected_revision=expected_revision)
 
     def clear_credentials(self, provider: str, *, expected_revision: int) -> Settings:
-        if provider == "minimax":
-            raise ValueError("MiniMax API Key 暂不支持浏览器编辑")
         fields = self.CREDENTIAL_FIELDS.get(provider)
         if fields is None:
             raise ValueError("未知服务")
@@ -219,7 +220,7 @@ class SettingsStore:
             for fields in self.PROVIDER_FIELDS.values()
             for field in fields
         } | set(self.RUNTIME_FIELDS)
-        # MiniMax Key 不接受运行时文件注入，未知字段也拒绝，避免静默误配置。
+        # 未知字段一律拒绝，避免静默误配置。
         if unknown := set(overrides) - allowed:
             raise ValueError(f"settings.json 包含不支持字段: {', '.join(sorted(unknown))}")
         self._revision = revision

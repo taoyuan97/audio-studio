@@ -17,7 +17,7 @@ const MODULES = [
   { path: '/meditation', icon: <CloudOutlined />, name: '冥想脚本', description: '对话式生成带停顿、情绪与语速标记的引导脚本', available: true },
   { path: '/tts', icon: <SoundOutlined />, name: 'TTS 人声', description: '从脚本产物或粘贴文本合成可播放的人声干声', available: true },
   { path: '/bgm', icon: <CustomerServiceOutlined />, name: '背景音', description: '用自然语言生成可循环的纯音乐背景轨', available: true },
-  { path: '/mixdown', icon: <SlidersOutlined />, name: '混音', description: '人声与背景音的最终合成', available: false },
+  { path: '/mixdown', icon: <SlidersOutlined />, name: '混音', description: '人声与背景音的最终合成', available: true },
   { path: '/library', icon: <FolderOutlined />, name: '产物库', description: '统一查看和管理脚本、人声、背景音与成品', available: true },
 ] as const
 
@@ -36,8 +36,8 @@ export default function DashboardPage() {
   return (
     <div className="page-stack dashboard-page">
       <section className="dashboard-hero">
-        <h1>AI 音频工作台</h1>
-        <p>从冥想脚本、TTS 人声到背景音乐，生成产物会自动汇入产物库。</p>
+        <h1>音频工作台</h1>
+        <p>从冥想脚本、TTS 人声到背景音乐，一站式创作冥想引导音频</p>
         {activeRuns.length > 0 && (
           <div className="dashboard-runs">
             {activeRuns.map((run) => <Tag className="dashboard-run-tag" color="processing" key={run.run_id} onClick={() => navigate(RUN_ROUTES[run.kind])}>{RUN_LABELS[run.kind]}</Tag>)}
@@ -89,17 +89,6 @@ export default function DashboardPage() {
                 })}
               </div>
             )}
-          </Card>
-          <Card title="快速开始">
-            <div className="dashboard-quick-start">
-              <button onClick={() => navigate('/meditation')}><strong>1</strong><span>生成冥想脚本</span></button>
-              <ArrowRightOutlined />
-              <button onClick={() => navigate('/tts')}><strong>2</strong><span>合成 TTS 人声</span></button>
-              <ArrowRightOutlined />
-              <button onClick={() => navigate('/bgm')}><strong>3</strong><span>可选：生成背景音</span></button>
-              <ArrowRightOutlined />
-              <button disabled><strong>4</strong><span>混音导出（待 T006）</span></button>
-            </div>
           </Card>
         </>
       )}

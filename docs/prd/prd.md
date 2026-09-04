@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.4
+- 版本：v1.5
 - 状态：已确认（决策点 A1–D4、E1–E8 全部闭环）
 - 创建日期：2026-08-26
+- 变更记录：v1.5 开放 MiniMax API Key 与模型 ID 的浏览器编辑；运行时 Key 可按需查看和清除，`.env` Key 仍禁止回显
 - 变更记录：v1.4 允许按字段查看浏览器保存的凭据；`.env`/MiniMax 禁止查看，火山 App ID 常显、Token 默认隐藏
 - 变更记录：v1.3 扩展 T007 设置能力：五类服务凭据和模型参数支持浏览器写入并免重启生效，MiniMax Key 暂只读
 - 变更记录：v1.2 按 MiniMax Music 3.0 官方能力校准 BGM 输入：自由 prompt 取代正式风格枚举，灵感示例仅填充文本，structure_hints 为非确定性提示
@@ -194,9 +195,9 @@
 
 ### 5.7 设置（一期，P0）
 
-- 浏览器可编辑 DeepSeek、通义千问、Kimi、阿里云 TTS、火山 TTS 的凭据及对应模型参数，保存后无需重启，对后续开始执行的任务立即生效。
-- MiniMax API Key 暂不支持在界面编辑，仅展示配置状态与掩码；LLM/MiniMax 超时参数可编辑。FFmpeg、FAKE_MODE 等本地环境配置只读。
-- 页面默认以密文展示凭据；仅 `DATA_DIR/settings.json` 中由浏览器保存的值可点击查看和修改，`.env` 与 MiniMax Key 禁止回显。火山 App ID 可直接查看，Access Token 默认隐藏并单独点击显示。
+- 浏览器可编辑 DeepSeek、通义千问、Kimi、阿里云 TTS、火山 TTS、MiniMax 的凭据及对应模型参数，保存后无需重启，对后续开始执行的任务立即生效。MiniMax 模型 ID 默认为 `music-3.0`。
+- LLM/MiniMax 超时参数可编辑；FFmpeg、FAKE_MODE 等本地环境配置只读。
+- 页面默认以密文展示凭据；仅 `DATA_DIR/settings.json` 中由浏览器保存的值可点击查看和修改，`.env` 凭据禁止回显。火山 App ID 可直接查看，Access Token 默认隐藏并单独点击显示。
 - 每项「测试连通」按钮：真实轻量探测（如合成一句短音频/列模型），返回成功/失败与原因。
 - 引擎版本等环境信息展示。
 

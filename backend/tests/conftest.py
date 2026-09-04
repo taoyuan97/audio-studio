@@ -24,7 +24,7 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "moonshot_model_id": "kimi-k2-0905-preview",
     }
     values.update(overrides)
-    return Settings(**values)
+    return Settings(_env_file=None, **values)
 
 
 @pytest.fixture

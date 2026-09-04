@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { App as AntdApp } from 'antd'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsPage from './SettingsPage'
@@ -44,7 +44,7 @@ describe('SettingsPage', () => {
         llm_moonshot: { ...editable, model_id: 'kimi-k2' },
         tts_aliyun: { ...editable, model_id: 'qwen-audio' },
         tts_volc: { ...editable, credential_masked: 'app***1234 / tok***5678', runtime_credential_fields: ['app_id', 'access_token'] },
-        minimax: { configured: false, credential_masked: null, credential_source: null, editable: false, runtime_credential_fields: [] },
+        minimax: { ...editable, credential_masked: 'min***3456', model_id: 'music-3.0' },
       },
       runtime: { llm_timeout_seconds: 120, minimax_timeout_seconds: 600 },
       ffmpeg: { available: true, version: 'ffmpeg version 9', ffprobe_available: true },
@@ -52,11 +52,12 @@ describe('SettingsPage', () => {
     })
   })
 
-  it('renders editable providers, masked credentials and readonly MiniMax key', async () => {
+  it('renders editable providers and masked credentials', async () => {
     renderPage()
     expect(await screen.findByText('DeepSeek')).toBeInTheDocument()
     expect(screen.getByText('MiniMax Music')).toBeInTheDocument()
-    expect(screen.getByText(/MiniMax API Key 暂不支持/)).toBeInTheDocument()
+    expect(screen.getByLabelText('MiniMax Music API Key')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('music-3.0')).toBeInTheDocument()
     expect(screen.getAllByText('API Key').length).toBeGreaterThan(0)
     expect(screen.getAllByText('sk-***abcd').length).toBeGreaterThan(0)
     expect(screen.getByText('当前为 FAKE_MODE')).toBeInTheDocument()
@@ -103,5 +104,43 @@ describe('SettingsPage', () => {
     await user.click(eye as HTMLElement)
     await waitFor(() => expect(input).toHaveValue('browser-token-secret'))
     expect(mocks.reveal).toHaveBeenCalledWith('tts_volc', 2, 'access_token')
+  })
+
+  it('reveals and saves the MiniMax API key and model ID', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const input = await screen.findByLabelText('MiniMax Music API Key')
+    const card = input.closest('.ant-card') as HTMLElement
+
+    const eye = input.parentElement?.querySelector('.ant-input-password-icon')
+    await user.click(eye as HTMLElement)
+    await waitFor(() => expect(mocks.reveal).toHaveBeenCalledWith('minimax', 2, 'credential'))
+
+    await user.clear(input)
+    await user.type(input, 'updated-minimax-key')
+    const modelInput = within(card).getByLabelText('模型 ID')
+    await user.clear(modelInput)
+    await user.type(modelInput, 'music-custom')
+    await user.click(within(card).getByRole('button', { name: /保存/ }))
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('minimax', {
+      revision: 2,
+      model_id: 'music-custom',
+      credential: 'updated-minimax-key',
+    }))
+  })
+
+  it('clears the MiniMax browser API key', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const input = await screen.findByLabelText('MiniMax Music API Key')
+    const card = input.closest('.ant-card') as HTMLElement
+
+    await user.click(within(card).getByRole('button', { name: '清除 API Key' }))
+    const confirmation = await screen.findByText('清除浏览器 API Key？')
+    const popup = confirmation.closest('.ant-popover-inner') as HTMLElement
+    await user.click(within(popup).getByRole('button', { name: /^清\s*除$/ }))
+
+    await waitFor(() => expect(mocks.clear).toHaveBeenCalledWith('minimax', 2))
   })
 })

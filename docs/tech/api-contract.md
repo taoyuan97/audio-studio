@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.9
+- 版本：v2.0
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v2.0 开放 MiniMax API Key 与模型 ID 的浏览器写入；运行时 Key 支持按需回显和清除，`.env` Key 仍禁止回显
 - 变更记录：v1.9 增加 T007 浏览器运行时凭据按字段回显；`.env`/MiniMax 禁止回显，火山 App ID 与 Access Token 独立处理
 - 变更记录：v1.8 扩展 T007 设置 API：五类服务凭据/模型参数浏览器写入、revision 并发控制与免重启热生效；MiniMax Key 仍只读
 - 变更记录：v1.7 增加 T009 冥想消息 `.md` / `.txt` 参考附件、持久化、重试与 LLM 上下文预算契约
@@ -450,7 +451,7 @@ SSE 事件流（协议见第 11 节）。
 
 ### 8.1 GET /api/music/defaults
 
-当前 Provider、能力、Prompt 灵感示例与通用输入范围。灵感示例仅用于填充文本，不是可校验的风格枚举。
+当前 Provider、运行时模型 ID、能力、Prompt 灵感示例与通用输入范围。模型 ID 默认 `music-3.0`，可由设置页覆盖；灵感示例仅用于填充文本，不是可校验的风格枚举。
 
 - 响应 200：
 
@@ -543,7 +544,7 @@ SSE 事件流（协议见第 11 节）。
     "llm_moonshot": { "configured": false, "credential_masked": null, "credential_source": null, "runtime_credential_fields": [], "model_id": "kimi-k2-0905-preview", "editable": true },
     "tts_aliyun": { "configured": true, "credential_masked": "sk-***9x8y", "credential_source": "runtime", "runtime_credential_fields": ["credential"], "model_id": "qwen-audio-3.0-tts-plus", "editable": true },
     "tts_volc": { "configured": true, "credential_masked": "123***3456 / tok***5678", "credential_source": "mixed", "runtime_credential_fields": ["app_id"], "editable": true },
-    "minimax": { "configured": true, "credential_masked": "eyJ***jk4", "credential_source": "env", "runtime_credential_fields": [], "editable": false }
+    "minimax": { "configured": true, "credential_masked": "eyJ***jk4", "credential_source": "runtime", "runtime_credential_fields": ["credential"], "model_id": "music-3.0", "editable": true }
   },
   "runtime": { "llm_timeout_seconds": 120, "minimax_timeout_seconds": 600 },
   "ffmpeg": { "available": true, "version": "ffmpeg version 7.0 ...", "ffprobe_available": true },
@@ -551,11 +552,11 @@ SSE 事件流（协议见第 11 节）。
 }
 ```
 
-`credential_source` 为 `runtime | env | mixed | null`；火山 App ID/Token 分别来自运行时与环境时为 `mixed`。`runtime_credential_fields` 只列出实际保存于 `settings.json`、允许回显的前端字段名，不含值。`editable=false` 表示该 provider 凭据不可通过浏览器写入。
+`credential_source` 为 `runtime | env | mixed | null`；火山 App ID/Token 分别来自运行时与环境时为 `mixed`。`runtime_credential_fields` 只列出实际保存于 `settings.json`、允许回显的前端字段名，不含值。
 
 ### 10.2 PATCH /api/settings/providers/{provider}
 
-保存 provider 配置。`provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | tts_aliyun | tts_volc`；MiniMax 不属于本端点的可写集合。
+保存 provider 配置。`provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | tts_aliyun | tts_volc | minimax`。
 
 - 请求示例（LLM/阿里云 TTS）：
 
@@ -567,6 +568,12 @@ SSE 事件流（协议见第 11 节）。
 
 ```json
 { "revision": 3, "app_id": "123456", "access_token": "token-new" }
+```
+
+- 请求示例（MiniMax Music）：
+
+```json
+{ "revision": 3, "credential": "minimax-key-new", "model_id": "music-3.0" }
 ```
 
 - 凭据字段未传表示保留当前值；空字符串非法，不承担清除语义。
@@ -583,7 +590,7 @@ SSE 事件流（协议见第 11 节）。
 仅回显浏览器保存的单个凭据字段。请求体为 `{ "revision": 3, "field": "credential" }`；火山字段使用 `app_id | access_token`，其余可写 provider 使用 `credential`。
 
 - 成功响应：`{ "revision": 3, "field": "credential", "value": "sk-full-value" }`，并设置 `Cache-Control: no-store`。
-- `.env` 基线值、未通过浏览器保存的字段、MiniMax、未知 provider 或字段错配一律返回 422，响应和错误信息不得包含完整值。
+- `.env` 基线值、未通过浏览器保存的字段、未知 provider 或字段错配一律返回 422，响应和错误信息不得包含完整值。
 - revision 过期返回 409；接口执行与写接口相同的本机 Origin 校验。
 - 前端不得把响应写入 localStorage、sessionStorage、URL 或 Query 缓存；组件卸载及保存成功时清除内存明文。
 

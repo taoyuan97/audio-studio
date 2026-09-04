@@ -20,11 +20,18 @@
 ### 1.2 设置范围修订（2026-08-30 确认）
 
 - 不创建独立 T007-A 设置任务，继续在本文件的 T007-B 中实施和验收。
-- 允许从浏览器写入 DeepSeek、通义千问、Kimi、阿里云 TTS、火山 TTS 的凭据；MiniMax API Key 暂不支持浏览器写入。
+- 允许从浏览器写入 DeepSeek、通义千问、Kimi、阿里云 TTS、火山 TTS 的凭据；MiniMax API Key 暂不支持浏览器写入（本条历史决策已由 1.3 修订取代）。
 - 允许编辑上述 LLM/阿里云 TTS 的模型 ID，以及 LLM/MiniMax 超时参数；取消三家 LLM 模型 ID 互不重复限制，只保留非空校验。
 - 浏览器保存后无需重启：已运行任务保持启动时快照，排队未执行任务及保存后新任务在开始执行时读取最新配置。
 - 安全边界限定为绑定 `127.0.0.1` 的本机可信用户，本期不增加登录鉴权。
 - 浏览器保存的凭据允许在设置页查看：默认隐藏，点击眼睛后按字段从后端读取；`.env` 凭据禁止回显。火山 TTS 的浏览器 App ID 直接显示，Access Token 默认隐藏并按需显示。
+
+### 1.3 MiniMax 设置范围修订（2026-09-04 确认）
+
+- MiniMax Music 已接通音乐生成服务，开放 API Key 与模型 ID 的浏览器编辑；模型 ID 默认为 `music-3.0`。
+- MiniMax 浏览器 Key 沿用其他单 Key provider 的查看与清除规则：仅运行时覆盖可按需回显，`.env` Key 禁止回显，清除覆盖后回退 `.env`。
+- 保存后刷新 BGM defaults；排队未执行及保存后新任务在实际开始时使用最新 MiniMax Key、模型 ID 与超时配置。
+- 本次只做自动化与浏览器 UI 验收，不调用真实 MiniMax 服务。
 
 ## 2. 目标
 
@@ -34,7 +41,7 @@
 
 - 产物库交互同原型：类型筛选 Tab、卡片（名称/类型徽章/参数摘要/生成时间）、详情弹层、重命名、删除确认、送下游（脚本→TTS、人声/背景→混音，跳转预选）、清空全部（确认）。
 - 首页同原型：模块卡片入口、产物计数、最近 5 条、快速开始引导。
-- 设置页按 provider 展示配置状态、掩码、来源与可编辑参数；仅浏览器保存的凭据可按需回显，`.env` 与 MiniMax Key 不可回显。保存和测试连通分离，保存成功即热生效。
+- 设置页按 provider 展示配置状态、掩码、来源与可编辑参数；仅浏览器保存的凭据可按需回显，`.env` 凭据不可回显。保存和测试连通分离，保存成功即热生效。
 
 ## 4. 分期范围
 
@@ -80,9 +87,9 @@
 
 - `SettingsStore` 启动时合并默认值、`.env` 与 `DATA_DIR/settings.json`（运行时文件 > `.env` > 默认值），以配置快照和 revision 作为后端统一读取入口；写入采用同目录临时文件 + `os.replace`，校验/持久化失败不污染内存有效配置。
 - `GET /api/settings/status`：provider 配置卡（`llm_deepseek|llm_qwen|llm_moonshot|tts_aliyun|tts_volc|minimax`）展示 configured、凭据掩码、`runtime|env` 来源、实际 model_id 与 editable；另展示可编辑 LLM/MiniMax 超时、只读 ffmpeg/ffprobe 和 FAKE_MODE。
-- `PATCH /api/settings/providers/{provider}`：写入三家 LLM、阿里云 TTS、火山 TTS 的凭据与模型参数；凭据字段未传表示保留，status/PATCH/日志均不返回完整凭据，只有专用 reveal 接口可按下述边界返回运行时字段。
-- `DELETE /api/settings/providers/{provider}/credentials`：二次确认后删除浏览器凭据覆盖；若 `.env` 存在则回退到环境值。MiniMax 不展示编辑/清除入口，后端也拒绝其 Key 写入。
-- `POST /api/settings/providers/{provider}/credentials/reveal`：携带 revision 与单个字段名，只返回 `settings.json` 中对应的浏览器覆盖值；`.env`、MiniMax、未保存字段和 provider/字段错配均拒绝。响应 `Cache-Control: no-store`，并沿用本机 Origin 校验。
+- `PATCH /api/settings/providers/{provider}`：写入三家 LLM、阿里云 TTS、火山 TTS、MiniMax 的凭据与模型参数；MiniMax 模型 ID 默认 `music-3.0`。凭据字段未传表示保留，status/PATCH/日志均不返回完整凭据，只有专用 reveal 接口可按下述边界返回运行时字段。
+- `DELETE /api/settings/providers/{provider}/credentials`：二次确认后删除浏览器凭据覆盖；若 `.env` 存在则回退到环境值。模型 ID 运行时覆盖不随凭据删除。
+- `POST /api/settings/providers/{provider}/credentials/reveal`：携带 revision 与单个字段名，只返回 `settings.json` 中对应的浏览器覆盖值；`.env`、未保存字段和 provider/字段错配均拒绝。响应 `Cache-Control: no-store`，并沿用本机 Origin 校验。
 - 页面凭据默认隐藏，点击眼睛才请求并显示；修改保存成功后立即清空前端明文状态、恢复隐藏并刷新配置。火山 App ID 单独自动读取并明文展示，Access Token 单独点击显示；不写入 Web Storage、URL 或 Query 缓存。
 - `PATCH /api/settings/runtime`：编辑 `llm_timeout_seconds`（1–600）与 `minimax_timeout_seconds`（30–1200）；FFmpeg、DATA_DIR、FAKE_MODE、SERVE_FRONTEND 等环境配置保持只读。
 - 所有写接口携带 revision；冲突返回 409 并提示刷新，避免多个页面静默覆盖。保存成功后刷新 settings status、会话 models 与 TTS/BGM defaults 等相关查询。
@@ -94,7 +101,7 @@
 ### 4.3 整体任务不实现
 
 - 产物批量操作（多选删除）；产物标签/搜索。
-- MiniMax API Key 浏览器编辑；FFmpeg/DATA_DIR/FAKE_MODE/SERVE_FRONTEND 浏览器编辑。
+- FFmpeg/DATA_DIR/FAKE_MODE/SERVE_FRONTEND 浏览器编辑。
 - 用户登录、管理员口令、凭据加密存储及局域网/公网开放；若未来放开非本机访问，须先另行设计认证。
 
 ## 5. 状态与数据流设计
@@ -112,9 +119,9 @@ Mutation: rename / delete / clearAll / updateProvider / clearCredentials / updat
 
 ## 6. 测试
 
-- 自动化（pytest）：settings status/probe/reveal 契约（掩码、来源、可回显字段、模型 ID、未配置、各 provider mock、`FFMPEG_PATH`/PATH）；运行时配置优先级、原子写失败回滚、重启持久化、凭据新增/替换/保留/清除/按字段回显、`.env` 与 MiniMax 回显拒绝、超时边界、revision 冲突及全链路脱敏。
+- 自动化（pytest）：settings status/probe/reveal 契约（掩码、来源、可回显字段、模型 ID、未配置、各 provider mock、`FFMPEG_PATH`/PATH）；运行时配置优先级、原子写失败回滚、重启持久化、凭据新增/替换/保留/清除/按字段回显、`.env` 回显拒绝、超时边界、revision 冲突及全链路脱敏。
 - 自动化（pytest）：保存后 models/defaults 立即刷新；运行中任务保持旧快照、排队任务开始时读取新快照；三个 provider 使用相同模型 ID 合法。
-- 自动化（Vitest）：Tab 过滤、卡片信息、送下游、清空确认；设置卡初始化、默认隐藏/点击显示/修改保存、火山字段独立处理、来源与掩码、清除/探测、revision 冲突、MiniMax Key 只读和相关 Query 失效。
+- 自动化（Vitest）：Tab 过滤、卡片信息、送下游、清空确认；设置卡初始化、默认隐藏/点击显示/修改保存、火山字段独立处理、来源与掩码、清除/探测、revision 冲突、MiniMax Key/模型 ID 编辑和相关 Query 失效。
 - 手工：四类产物入库后产物库全操作走查；删除 voice 后混音页下拉同步消失；浏览器更新五类服务配置后不重启验证 defaults/模型列表与真实 probe；确认响应、日志和页面不泄露完整凭据。
 
 ## 7. 验收标准
@@ -134,7 +141,7 @@ Mutation: rename / delete / clearAll / updateProvider / clearCredentials / updat
 - [x] 产物库支持 BGM/mix 展示、参数摘要及既定路由下游语义；BGM 页面已开放。实际 mix 生成与混音页仍等待 T006。
 - [x] 清空全部及二次确认；脚本历史版本查看与恢复入口。
 - [x] 设置页状态卡、配置来源、凭据掩码、实际 model_id、可编辑超时、FFmpeg/ffprobe 与 FAKE_MODE 状态完整呈现。
-- [x] DeepSeek/千问/Kimi/阿里云 TTS/火山 TTS 凭据可在浏览器新增、查看、替换和清除；仅浏览器保存值可回显，`.env` 与 MiniMax Key 均不可回显或通过浏览器写入。
+- [x] DeepSeek/千问/Kimi/阿里云 TTS/火山 TTS/MiniMax 凭据可在浏览器新增、查看、替换和清除；仅浏览器保存值可回显，`.env` 凭据不可回显；MiniMax 模型 ID 默认 `music-3.0` 且可编辑。
 - [x] 凭据默认隐藏、点击眼睛显示，保存后恢复隐藏；火山 App ID 常显且 Access Token 独立隐藏/显示。
 - [x] 配置持久化到 `DATA_DIR/settings.json`，优先级与回退正确，保存后无需重启并按任务开始时点热生效。
 - [x] revision 冲突、字段校验、原子写失败均有明确反馈且不破坏旧配置；三家 LLM 模型 ID 允许重复。
@@ -147,3 +154,11 @@ Mutation: rename / delete / clearAll / updateProvider / clearCredentials / updat
 - 前端：Vitest `44 passed`；ESLint 通过；TypeScript + Vite 生产构建通过。
 - 浏览器：设置、产物库、首页与 BGM 路由实机渲染通过；另以隔离的临时 DATA_DIR 验证 App ID 自动显示、Access Token/LLM 凭据独立点击显示、`.env` 无查看入口、修改保存后恢复隐藏，未发现 console error/warn，未调用真实 provider 或修改现有业务数据。
 - 待外部依赖：T006 混音 API/页面未实现，因此 mix 产物只能兼容展示既有/未来数据，不能由当前工作台新生成。
+
+### 7.4 2026-09-04 MiniMax 设置扩展验证
+
+- 人工验收：已通过；MiniMax API Key 与模型 ID 的浏览器编辑、保存、查看、清除回退及热生效符合确认方案。
+- 后端：`177 passed`；测试夹具显式禁用 `.env` 加载，运行时保存、重启恢复、按需回显、清除回退、模型 defaults 与服务商请求模型传递均通过。
+- 前端：Vitest `53 passed`；ESLint 与 TypeScript + Vite 生产构建通过。
+- 浏览器：隔离 DATA_DIR 与假凭据下，MiniMax Key/模型 ID 编辑、保存后隐藏、来源刷新、清除按钮状态及按需回显请求通过；未点击“测试连通”，未调用音乐生成端点，验收临时数据已删除。
+- 隔离修正：首次完整测试前的定向用例曾因既有 fixture 自动加载 `backend/.env`，意外调用一次 MiniMax `GET /v1/models` 探测；随即将 fixture 改为 `_env_file=None`，后续测试与浏览器验收不再读取真实凭据或访问 provider。

@@ -13,6 +13,7 @@ def test_model_id_defaults_preserve_existing_models():
     assert settings.dashscope_model_id == "qwen-plus"
     assert settings.moonshot_model_id == "kimi-k2-0905-preview"
     assert settings.aliyun_tts_model_id == "qwen-audio-3.0-tts-plus"
+    assert settings.minimax_model_id == "music-3.0"
 
 
 def test_model_ids_are_trimmed_and_customizable():
@@ -36,6 +37,11 @@ def test_blank_model_id_is_rejected_with_field_name():
 def test_blank_aliyun_tts_model_id_is_rejected():
     with pytest.raises(ValidationError, match="ALIYUN_TTS_MODEL_ID 不能为空"):
         Settings(_env_file=None, aliyun_tts_model_id="  ")
+
+
+def test_blank_minimax_model_id_is_rejected():
+    with pytest.raises(ValidationError, match="MINIMAX_MODEL_ID 不能为空"):
+        Settings(_env_file=None, minimax_model_id="  ")
 
 
 def test_aliyun_tts_configuration_is_independent_from_dashscope():

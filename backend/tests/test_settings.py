@@ -6,11 +6,14 @@ import json
 
 from fastapi.testclient import TestClient
 
+from app.config import SettingsStore
+
 
 def test_status_is_masked_and_exposes_runtime(client: TestClient):
     body = client.get("/api/settings/status").json()
     assert body["revision"] == 0
-    assert body["providers"]["minimax"]["editable"] is False
+    assert body["providers"]["minimax"]["editable"] is True
+    assert body["providers"]["minimax"]["model_id"] == "music-3.0"
     assert "credential_masked" in body["providers"]["llm_deepseek"]
     assert body["providers"]["llm_deepseek"]["runtime_credential_fields"] == []
     assert body["runtime"]["llm_timeout_seconds"] == 120
@@ -98,7 +101,7 @@ def test_provider_update_persists_and_refreshes_models(app, client: TestClient):
     assert any(item["provider"] == "deepseek" and item["model"] == "same-model" for item in models)
 
 
-def test_revision_conflict_and_minimax_write_rejected(client: TestClient):
+def test_revision_conflict(client: TestClient):
     first = client.patch(
         "/api/settings/runtime",
         json={"revision": 0, "llm_timeout_seconds": 30},
@@ -110,11 +113,57 @@ def test_revision_conflict_and_minimax_write_rejected(client: TestClient):
     )
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "SETTINGS_REVISION_CONFLICT"
-    minimax = client.patch(
+
+
+def test_minimax_browser_configuration_lifecycle(app, client: TestClient):
+    app.state.settings_store._base.minimax_api_key = "env-minimax-key"
+    saved = client.patch(
         "/api/settings/providers/minimax",
-        json={"revision": 1, "credential": "forbidden"},
+        json={
+            "revision": 0,
+            "credential": "browser-minimax-key",
+            "model_id": "music-custom",
+        },
     )
-    assert minimax.status_code == 422
+    assert saved.status_code == 200
+    provider = saved.json()["provider"]
+    assert provider["editable"] is True
+    assert provider["credential_source"] == "runtime"
+    assert provider["runtime_credential_fields"] == ["credential"]
+    assert provider["model_id"] == "music-custom"
+    assert "browser-minimax-key" not in saved.text
+
+    revealed = client.post(
+        "/api/settings/providers/minimax/credentials/reveal",
+        json={"revision": 1, "field": "credential"},
+    )
+    assert revealed.status_code == 200
+    assert revealed.json()["value"] == "browser-minimax-key"
+    assert client.get("/api/music/defaults").json()["model"] == "music-custom"
+
+    restored = SettingsStore(
+        app.state.settings_store._base,
+        app.state.data_dir / "settings.json",
+    )
+    assert restored.current.minimax_api_key == "browser-minimax-key"
+    assert restored.current.minimax_model_id == "music-custom"
+
+    cleared = client.request(
+        "DELETE",
+        "/api/settings/providers/minimax/credentials",
+        json={"revision": 1},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["provider"]["credential_source"] == "env"
+    assert app.state.settings_store.current.minimax_api_key == "env-minimax-key"
+    assert app.state.settings_store.current.minimax_model_id == "music-custom"
+
+    env_reveal = client.post(
+        "/api/settings/providers/minimax/credentials/reveal",
+        json={"revision": 2, "field": "credential"},
+    )
+    assert env_reveal.status_code == 422
+    assert "env-minimax-key" not in env_reveal.text
 
 
 def test_clear_runtime_credentials_falls_back_to_base(app, client: TestClient):

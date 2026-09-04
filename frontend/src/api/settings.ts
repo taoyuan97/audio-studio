@@ -23,20 +23,20 @@ export function getSettingsStatus(signal?: AbortSignal) {
 }
 
 export function updateProvider(
-  provider: Exclude<SettingsProviderId, 'minimax'>,
+  provider: SettingsProviderId,
   payload: { revision: number; credential?: string; model_id?: string; app_id?: string; access_token?: string },
 ) {
   return apiFetch<ProviderUpdateResponse>(`/api/settings/providers/${provider}`, { method: 'PATCH', body: payload })
 }
 
-export function clearProviderCredentials(provider: Exclude<SettingsProviderId, 'minimax'>, revision: number) {
+export function clearProviderCredentials(provider: SettingsProviderId, revision: number) {
   return apiFetch<ProviderUpdateResponse>(`/api/settings/providers/${provider}/credentials`, {
     method: 'DELETE', body: { revision },
   })
 }
 
 export function revealProviderCredential(
-  provider: Exclude<SettingsProviderId, 'minimax'>,
+  provider: SettingsProviderId,
   revision: number,
   field: 'credential' | 'app_id' | 'access_token',
 ) {

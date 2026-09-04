@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.9
+- 版本：v2.0
 - 状态：设计已确认、部分实施（T001–T003 已完成；T004 阿里云技术验收通过、火山延期；T005 已实现、真实 MiniMax smoke 因 Key/账号权限阻塞；T006 待实施；T007 除完整混音闭环外已实现；T008 待实施）
 - 创建日期：2026-08-26
+- 变更记录：v2.0 开放 MiniMax API Key 与模型 ID 的浏览器编辑、回显和清除；BGM defaults 与任务开始时快照读取运行时模型 ID
 - 变更记录：v1.9 增加仅限浏览器运行时凭据的按字段回显；`.env`/MiniMax 禁止回显，火山 App ID 与 Token 独立展示
 - 变更记录：v1.8 扩展 T007 设置线：五类服务凭据与模型参数支持浏览器持久化和免重启热生效；MiniMax Key 仍只读
 - 变更记录：v1.7 增加 T009 冥想消息 Markdown/TXT 参考附件、SQLite 持久化及 LLM 上下文预算设计
@@ -88,7 +89,7 @@
 | 音色库（D4） | 官方音色列表硬编码后端配置，支持试听（按引擎+音色缓存） |
 | 纯音乐（D2） | 并入 BGM 模块；混音页支持仅背景轨导出 |
 | 闪避（D1） | 仅模式 B「人声时压低」，带开关；单轨组合自动失效 |
-| API Key（D3，已修订） | `.env` 提供初始值，浏览器可为 DeepSeek/千问/Kimi/阿里云 TTS/火山 TTS 写入本机运行时覆盖并热生效；仅运行时覆盖可按字段回显，`.env`/MiniMax Key 不可回显 |
+| API Key（D3，已修订） | `.env` 提供初始值，浏览器可为 DeepSeek/千问/Kimi/阿里云 TTS/火山 TTS/MiniMax 写入本机运行时覆盖并热生效；仅运行时覆盖可按字段回显，`.env` 凭据不可回显 |
 | 范围裁剪（C1/C2） | 敏感词过滤、用量统计/预算告警砍掉 |
 | 分期（C4） | 一期：冥想 + TTS + 混音（P0）、BGM（P1）；播客二期 |
 | 生产部署 | FastAPI 托管 `frontend/dist`，单进程（uvicorn），`SERVE_FRONTEND` 开关 |
@@ -229,7 +230,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 
 ### 5.7 BGM 线设计
 
-- **`app/music/provider.py` + `app/music/minimax.py`**：通用层使用 `prompt/target_duration/structure_hints/format`；MiniMax adapter 才映射 `model: music-3.0`、`is_instrumental: true`、`lyrics_optimizer: false`、`stream: false`、`output_format: url`。同步单次 POST `/music_generation`，httpx 长超时 10min，响应含 `audio_url/request_id/时长/采样率`；**无 task_id 轮询**。
+- **`app/music/provider.py` + `app/music/minimax.py`**：通用层使用 `prompt/target_duration/structure_hints/format`；MiniMax adapter 才映射运行时 `model`（默认 `music-3.0`）、`is_instrumental: true`、`lyrics_optimizer: false`、`stream: false`、`output_format: url`。同步单次 POST `/music_generation`，httpx 长超时 10min，响应含 `audio_url/request_id/时长/采样率`；**无 task_id 轮询**。
 - **错误分类（移植）**：API Key 无效 / 限流 / 余额权限 / 内容审核 / 超时 / 参数错误 / 服务不可用 → 分类映射 `MusicServiceError`，透出差异化错误码与文案。
 - **计费安全（E8，移植语义）**：生成失败**不自动重试**；`audio_url` 与 `expires_at` 落 `runs.result_json`——失败 run 的重试接口区分两档：
   - `retry=download`：URL 未过期 → 仅重新下载（免计费）；
@@ -258,11 +259,11 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 
 - `SettingsStore` 是进程内配置单一入口：启动时合并默认值、`.env` 与 `DATA_DIR/settings.json`，优先级为运行时文件 > `.env` > 默认值；持久化采用同目录临时文件 + `os.replace` 原子替换。
 - `GET /api/settings/status`：返回配置 revision、各 provider 的 configured/掩码/来源及可编辑模型参数，同时返回 ffmpeg/ffprobe、FAKE_MODE 等只读环境状态；任何响应均不含完整凭据。
-- `PATCH /api/settings/providers/{provider}`：支持 `llm_deepseek|llm_qwen|llm_moonshot|tts_aliyun|tts_volc` 的凭据和模型参数更新；`minimax` 拒绝 Key 写入。密码字段未传表示保留，显式清除走独立 credentials 删除端点。
+- `PATCH /api/settings/providers/{provider}`：支持 `llm_deepseek|llm_qwen|llm_moonshot|tts_aliyun|tts_volc|minimax` 的凭据和模型参数更新；MiniMax 模型 ID 默认 `music-3.0`。密码字段未传表示保留，显式清除走独立 credentials 删除端点。
 - `PATCH /api/settings/runtime`：更新 `llm_timeout_seconds`、`minimax_timeout_seconds`；其他本地环境参数不开放写入。
 - `DELETE /api/settings/providers/{provider}/credentials`：删除浏览器运行时凭据覆盖；若 `.env` 有值则立即回退并在 status 中显示 `source=env`。
-- `POST /api/settings/providers/{provider}/credentials/reveal`：以 revision + 单字段读取 `SettingsStore._overrides`，不读取合并后的 Settings，因而不会回退或泄露 `.env`；成功响应禁止缓存，并复用本机 Origin 校验。火山 App ID/Token 分字段请求，页面自动读取 App ID 不会同时下发 Token。
-- 前端完整凭据只保存在 ProviderCard 组件状态：默认隐藏，点击显示；保存成功与卸载时释放，不进入 React Query/Web Storage/URL。火山 App ID 为普通输入常显，Access Token 使用独立密码输入。
+- `POST /api/settings/providers/{provider}/credentials/reveal`：以 revision + 单字段读取 `SettingsStore._overrides`，不读取合并后的 Settings，因而不会回退或泄露 `.env`；成功响应禁止缓存，并复用本机 Origin 校验。MiniMax 与其他单 Key provider 使用 `credential`，火山 App ID/Token 分字段请求，页面自动读取 App ID 不会同时下发 Token。
+- 前端完整凭据只保存在 ProviderCard 组件状态：默认隐藏，点击显示；保存成功与卸载时释放，不进入 React Query/Web Storage/URL。MiniMax 使用标准密码输入并可编辑模型 ID；火山 App ID 为普通输入常显，Access Token 使用独立密码输入。
 - 写接口携带 revision 做乐观并发控制；校验并原子落盘成功后才替换内存快照。保存和真实连通测试分离，探测失败不回滚配置。
 - `POST /api/settings/probe/{provider}`：轻量真实探测——LLM（一次极短补全）、TTS（合成一句短音频即弃）、MiniMax（调用官方 `GET /v1/models`，不触发音乐生成计费）、ffmpeg（版本）。FAKE_MODE 不改变 probe 的真实探测语义。
 - 免重启生效边界：已运行任务保留启动时快照；排队中尚未执行及保存后新提交的任务在开始执行时读取最新快照。LLM registry、TTS/BGM handler 不得永久捕获启动时配置。
@@ -270,7 +271,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 
 ### 5.10 环境配置
 
-以下环境变量作为初始值和运行时覆盖的回退值。浏览器可编辑项保存到 `DATA_DIR/settings.json` 后立即覆盖对应环境值；删除运行时覆盖则回退，无需重启。MiniMax Key、FFmpeg、DATA_DIR、FAKE_MODE、SERVE_FRONTEND 仍只能通过环境配置。
+以下环境变量作为初始值和运行时覆盖的回退值。浏览器可编辑项保存到 `DATA_DIR/settings.json` 后立即覆盖对应环境值；删除运行时覆盖则回退，无需重启。FFmpeg、DATA_DIR、FAKE_MODE、SERVE_FRONTEND 仍只能通过环境配置。
 
 ```dotenv
 # LLM（剧本生成）
@@ -291,6 +292,7 @@ VOLC_TTS_ACCESS_TOKEN=
 
 # MiniMax Music
 MINIMAX_API_KEY=
+MINIMAX_MODEL_ID=music-3.0
 MINIMAX_TIMEOUT_SECONDS=600    # 同步接口长超时（E1，典型 1–3 分钟，上限 10 分钟）
 
 # 本地环境

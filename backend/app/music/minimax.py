@@ -32,6 +32,7 @@ async def generate_music(
     api_key: str,
     request: MusicGenerationRequest,
     *,
+    model: str = MODEL,
     timeout: float = 600,
     transport: httpx.AsyncBaseTransport | None = None,
     base_url: str = BASE_URL,
@@ -43,7 +44,7 @@ async def generate_music(
         raise MusicServiceError("MUSIC_REQUEST_INVALID", "音乐 Prompt 长度必须为 1～2000 个字符")
 
     payload = {
-        "model": MODEL,
+        "model": model,
         "prompt": build_prompt(request),
         "stream": False,
         "output_format": "url",

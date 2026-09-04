@@ -26,7 +26,7 @@ const PROVIDERS: Array<{ id: SettingsProviderId; title: string; kind: string; mo
   { id: 'llm_moonshot', title: 'Kimi', kind: 'LLM', model: true },
   { id: 'tts_aliyun', title: '阿里云 TTS', kind: 'TTS', model: true },
   { id: 'tts_volc', title: '火山引擎 TTS', kind: 'TTS' },
-  { id: 'minimax', title: 'MiniMax Music', kind: 'BGM' },
+  { id: 'minimax', title: 'MiniMax Music', kind: 'BGM', model: true },
 ]
 
 function errorMessage(error: unknown): string {
@@ -85,7 +85,7 @@ function ProviderCard({
       else setAccessTokenVisible(true)
       return
     }
-    if (!revealable(field) || id === 'minimax') return
+    if (!revealable(field)) return
     const setLoading = field === 'credential' ? setCredentialLoading : setAccessTokenLoading
     setLoading(true)
     try {
@@ -106,7 +106,6 @@ function ProviderCard({
   }
   const saveMutation = useMutation({
     mutationFn: (values: Record<string, string>) => {
-      if (id === 'minimax') throw new Error('MiniMax Key 暂不支持浏览器编辑')
       const payload: { revision: number; credential?: string; model_id?: string; app_id?: string; access_token?: string } = { revision }
       if (hasModel) payload.model_id = values.model_id
       if (id === 'tts_volc') {
@@ -125,6 +124,7 @@ function ProviderCard({
       refresh()
       queryClient.invalidateQueries({ queryKey: ['models'] })
       queryClient.invalidateQueries({ queryKey: ['tts-defaults'] })
+      queryClient.invalidateQueries({ queryKey: ['music-defaults'] })
       message.success(`${title} 配置已保存并生效`)
     },
     onError: (error) => {
@@ -133,7 +133,7 @@ function ProviderCard({
     },
   })
   const clearMutation = useMutation({
-    mutationFn: () => clearProviderCredentials(id as Exclude<SettingsProviderId, 'minimax'>, revision),
+    mutationFn: () => clearProviderCredentials(id, revision),
     onSuccess: () => {
       refresh()
       message.success(`${title} ${id === 'tts_volc' ? '浏览器认证信息已清除' : '浏览器 API Key 已清除'}`)
@@ -207,6 +207,7 @@ function ProviderCard({
       {status.editable ? (
         <Form
           form={form}
+          name={id}
           layout="vertical"
           initialValues={{ model_id: status.model_id }}
           onFinish={(values) => saveMutation.mutate(values)}
@@ -237,7 +238,7 @@ function ProviderCard({
         </Form>
       ) : (
         <Space direction="vertical" size="middle">
-          <Alert type="info" showIcon message="MiniMax API Key 暂不支持从浏览器修改，请通过 backend/.env 配置。" />
+          <Alert type="info" showIcon message="当前服务配置为只读。" />
           <Button icon={<ExperimentOutlined />} onClick={() => probeMutation.mutate()} loading={probeMutation.isPending}>测试连通</Button>
         </Space>
       )}

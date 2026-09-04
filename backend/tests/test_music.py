@@ -158,10 +158,11 @@ def test_minimax_payload_and_url_ttl():
         generate_music(
             "secret",
             MusicGenerationRequest("空灵音乐", 300, ("intro", "outro")),
+            model="music-custom",
             transport=httpx.MockTransport(handler),
         )
     )
-    assert captured["model"] == "music-3.0"
+    assert captured["model"] == "music-custom"
     assert captured["is_instrumental"] is True
     assert captured["lyrics_optimizer"] is False
     assert captured["stream"] is False

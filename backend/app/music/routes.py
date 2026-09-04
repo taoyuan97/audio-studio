@@ -50,10 +50,11 @@ class MusicRetryRequest(BaseModel):
 
 
 @router.get("/defaults")
-def defaults():
+def defaults(request: Request):
+    settings: Settings = request.app.state.settings_store.current
     return {
         "provider": "minimax",
-        "model": MODEL,
+        "model": settings.minimax_model_id,
         "capabilities": {
             "instrumental": True,
             "prompt_max_length": 2000,
@@ -67,7 +68,7 @@ def defaults():
     }
 
 
-def _snapshot(payload: MusicJobRequest) -> dict:
+def _snapshot(payload: MusicJobRequest, model: str = MODEL) -> dict:
     prompt = payload.prompt.strip()
     if not 1 <= len(prompt) <= 2000:
         raise invalid("MUSIC_PARAMS_INVALID", "音乐描述长度必须为 1～2000 个字符")
@@ -81,7 +82,7 @@ def _snapshot(payload: MusicJobRequest) -> dict:
         raise invalid("MUSIC_PARAMS_INVALID", "结构倾向无效或重复")
     return {
         "provider": "minimax",
-        "model": MODEL,
+        "model": model,
         "prompt": prompt,
         "target_duration": payload.target_duration,
         "structure_hints": payload.structure_hints,
@@ -93,7 +94,7 @@ def _snapshot(payload: MusicJobRequest) -> dict:
 async def submit_job(payload: MusicJobRequest, request: Request):
     repo: Repository = request.app.state.repository
     settings: Settings = request.app.state.settings_store.current
-    snapshot = _snapshot(payload)
+    snapshot = _snapshot(payload, settings.minimax_model_id)
     if not settings.fake_mode and not settings.minimax_api_key:
         raise ApiError("MUSIC_AUTH_FAILED", "未配置 MiniMax API Key", 502)
     if repo.active_run_for_request("music", snapshot):
@@ -151,7 +152,12 @@ async def _emit_progress(repo: Repository, ctx: RunContext, phase: str, waited_s
 
 async def _generate_with_heartbeat(ctx: RunContext, repo: Repository, settings: Settings, request: MusicGenerationRequest):
     task = asyncio.create_task(
-        generate_music(settings.minimax_api_key, request, timeout=settings.minimax_timeout_seconds)
+        generate_music(
+            settings.minimax_api_key,
+            request,
+            model=settings.minimax_model_id,
+            timeout=settings.minimax_timeout_seconds,
+        )
     )
     started = time.monotonic()
     next_heartbeat = 0.0
@@ -221,6 +227,9 @@ def make_music_handler(repo: Repository, settings_store: SettingsStore, audio_di
                 await _emit_progress(repo, ctx, "downloading")
                 await _download(ctx, stored["audio_url"], source)
             elif settings.fake_mode:
+                snapshot = {**snapshot, "model": settings.minimax_model_id}
+                remote_result["request"] = snapshot
+                repo.set_run_result(ctx.run_id, remote_result)
                 await _emit_progress(repo, ctx, "generating", 0)
                 source_duration = await asyncio.to_thread(
                     generate_fake_music, source, snapshot["prompt"], snapshot["structure_hints"]
@@ -229,6 +238,9 @@ def make_music_handler(repo: Repository, settings_store: SettingsStore, audio_di
                 repo.set_run_result(ctx.run_id, remote_result)
                 await _emit_progress(repo, ctx, "downloading")
             else:
+                snapshot = {**snapshot, "model": settings.minimax_model_id}
+                remote_result["request"] = snapshot
+                repo.set_run_result(ctx.run_id, remote_result)
                 generated = await _generate_with_heartbeat(ctx, repo, settings, request)
                 remote_result.update(
                     audio_url=generated.audio_url,

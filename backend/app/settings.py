@@ -30,7 +30,7 @@ REVEAL_FIELDS: dict[str, dict[str, str]] = {
         "app_id": "volc_tts_app_id",
         "access_token": "volc_tts_access_token",
     },
-    "minimax": {},
+    "minimax": {"credential": "minimax_api_key"},
 }
 
 
@@ -94,7 +94,7 @@ def _provider_status(store: SettingsStore, provider: str) -> dict:
         model_id = None
     elif provider == "minimax":
         credentials = [settings.minimax_api_key]
-        model_id = None
+        model_id = settings.minimax_model_id
     else:
         raise ValueError(provider)
     configured = all(bool(value) for value in credentials)
@@ -102,7 +102,7 @@ def _provider_status(store: SettingsStore, provider: str) -> dict:
         "configured": configured,
         "credential_masked": " / ".join(filter(None, (_mask(value) for value in credentials))) or None,
         "credential_source": store.credential_source(provider),
-        "editable": provider != "minimax",
+        "editable": True,
         "runtime_credential_fields": _runtime_credential_fields(store, provider),
     }
     if model_id is not None:
@@ -209,6 +209,7 @@ def update_provider(provider: str, payload: ProviderUpdate, request: Request):
         "llm_moonshot": {"credential": "moonshot_api_key", "model_id": "moonshot_model_id"},
         "tts_aliyun": {"credential": "aliyun_tts_api_key", "model_id": "aliyun_tts_model_id"},
         "tts_volc": {"app_id": "volc_tts_app_id", "access_token": "volc_tts_access_token"},
+        "minimax": {"credential": "minimax_api_key", "model_id": "minimax_model_id"},
     }
     mapping = field_map.get(provider)
     if mapping is None:
