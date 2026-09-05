@@ -35,7 +35,8 @@ async def demo_handler(ctx: RunContext) -> str:
             stage=f"step-{step + 1}",
             event="demo.progress",
         )
-        await ctx.sleep(0.05)
+        # 留出足够窗口让真实 HTTP/SSE 客户端在任务终态前完成订阅。
+        await ctx.sleep(0.2)
 
     manager = ctx._manager  # noqa: SLF001 - 演示任务直接复用管理器内部引用
     repo: Repository = manager.repo

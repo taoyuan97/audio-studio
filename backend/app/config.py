@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     ffmpeg_path: str = ""
     fake_mode: bool = False
+    e2e_mode: bool = False
     serve_frontend: bool = False
 
     # LLM 超时

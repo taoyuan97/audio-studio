@@ -86,6 +86,21 @@ export function useRunStream(runId: string | null, handlers: RunEventHandlers): 
       const listener = (event: MessageEvent): void => {
         const payload = parsePayload(event.data)
         handlersRef.current[name]?.(payload as never)
+        if (name === 'run.status') {
+          const snapshot = payload as RunStatusEvent
+          if (snapshot.status === 'completed') {
+            handlersRef.current['run.completed']?.({ artifact_id: snapshot.artifact_id ?? null })
+            source.close()
+          } else if (snapshot.status === 'failed') {
+            handlersRef.current['run.failed']?.(
+              snapshot.error ?? { code: 'RUN_FAILED', message: '任务执行失败' },
+            )
+            source.close()
+          } else if (snapshot.status === 'cancelled') {
+            handlersRef.current['run.cancelled']?.({})
+            source.close()
+          }
+        }
         if (TERMINAL_RUN_EVENTS.has(name)) source.close()
       }
       source.addEventListener(name, listener as EventListener)

@@ -6,6 +6,8 @@ import argparse
 import asyncio
 import sys
 import tempfile
+import time
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -18,7 +20,13 @@ from app.music.postprocess import MusicProcessingError, process_music
 from app.music.provider import MusicGenerationRequest, MusicServiceError
 
 
-async def probe(settings: Settings, prompt: str, duration: int, output_format: str) -> bool:
+async def probe(
+    settings: Settings,
+    prompt: str,
+    duration: int,
+    output_format: str,
+    output_dir: Path,
+) -> bool:
     if not settings.minimax_api_key:
         print("SKIP minimax: 未配置 MINIMAX_API_KEY")
         return False
@@ -29,7 +37,10 @@ async def probe(settings: Settings, prompt: str, duration: int, output_format: s
         structure_hints=("intro", "outro"),
         output_format=output_format,
     )
+    started = time.perf_counter()
     try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        final = output_dir / f"music-minimax.{output_format}"
         generated = await generate_music(
             settings.minimax_api_key,
             request,
@@ -38,7 +49,6 @@ async def probe(settings: Settings, prompt: str, duration: int, output_format: s
         with tempfile.TemporaryDirectory(prefix="audio-studio-music-") as temp_name:
             temp_dir = Path(temp_name)
             source = temp_dir / "source.mp3"
-            final = temp_dir / f"final.{output_format}"
             async with httpx.AsyncClient(timeout=300, follow_redirects=True) as client:
                 async with client.stream("GET", generated.audio_url) as response:
                     response.raise_for_status()
@@ -61,7 +71,7 @@ async def probe(settings: Settings, prompt: str, duration: int, output_format: s
         f"OK   minimax: model={MODEL} request_id={generated.request_id} "
         f"source={source_info.duration_seconds:.2f}s "
         f"final={final_info.duration_seconds:.2f}s/{final_info.sample_rate}Hz "
-        "url_ttl=24h"
+        f"elapsed={time.perf_counter() - started:.2f}s path={final.resolve()} url_ttl=24h"
     )
     return True
 
@@ -71,6 +81,7 @@ async def main() -> int:
     parser.add_argument("--yes", action="store_true", help="确认执行可能计费的真实调用")
     parser.add_argument("--duration", type=int, default=60, help="目标秒数（60～600）")
     parser.add_argument("--format", choices=("mp3", "wav"), default="mp3")
+    parser.add_argument("--output-dir", type=Path, help="生成物目录；默认 DATA_DIR/smoke/<时间>")
     parser.add_argument(
         "--prompt",
         default="空灵缓慢的冥想背景音乐，古琴和柔和氛围音色，无明显鼓点，纯音乐",
@@ -80,7 +91,11 @@ async def main() -> int:
         parser.error("真实探针可能产生 MiniMax 费用；确认后请增加 --yes")
     if not 60 <= args.duration <= 600:
         parser.error("--duration 必须为 60～600")
-    return 0 if await probe(Settings(fake_mode=False), args.prompt, args.duration, args.format) else 1
+    settings = Settings(fake_mode=False)
+    output_dir = args.output_dir or (
+        settings.data_dir / "smoke" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    )
+    return 0 if await probe(settings, args.prompt, args.duration, args.format, output_dir) else 1
 
 
 if __name__ == "__main__":

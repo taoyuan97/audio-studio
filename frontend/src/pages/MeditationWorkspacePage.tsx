@@ -588,6 +588,7 @@ export default function MeditationWorkspacePage() {
               setEditing(false)
             }}
             onSaveVersion={() => handleSaveVersion()}
+            onSendToTts={() => artifact && navigate(`/tts?artifact_id=${artifact.id}`)}
             onOpenVersions={() => {
               setSelectedVersion(null)
               setVersionsOpen(true)
@@ -779,6 +780,7 @@ interface ScriptResultCardProps {
   onStartEdit: () => void
   onFinishEdit: () => void
   onSaveVersion: () => void
+  onSendToTts: () => void
   onOpenVersions: () => void
 }
 
@@ -797,6 +799,7 @@ function ScriptResultCard({
   onStartEdit,
   onFinishEdit,
   onSaveVersion,
+  onSendToTts,
   onOpenVersions,
 }: ScriptResultCardProps) {
   return (
@@ -868,7 +871,8 @@ function ScriptResultCard({
               type="primary"
               icon={<ArrowRightOutlined />}
               title="送 TTS 合成（T004 任务入口）"
-              disabled
+              disabled={!hasArtifact || hasUnsavedChanges || savingDraft}
+              onClick={onSendToTts}
             >
               送去 TTS
             </Button>

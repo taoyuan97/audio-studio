@@ -120,6 +120,39 @@ describe('useRunStream 事件分发与连接生命周期', () => {
     expect(es.closed).toBe(true)
   })
 
+  it('把连接时收到的 completed/failed/cancelled 快照归一化为终态事件', () => {
+    const handlers: RunEventHandlers = {
+      'run.completed': vi.fn(),
+      'run.failed': vi.fn(),
+      'run.cancelled': vi.fn(),
+    }
+    renderHook(() => useRunStream('run_snapshot', handlers))
+
+    const completed = MockEventSource.instances[0]
+    act(() => completed.emit('run.status', {
+      status: 'completed', queue_position: 0, progress: null, artifact_id: 'art_fast',
+    }))
+    expect(handlers['run.completed']).toHaveBeenCalledWith({ artifact_id: 'art_fast' })
+    expect(completed.closed).toBe(true)
+
+    renderHook(() => useRunStream('run_failed_snapshot', handlers))
+    const failed = MockEventSource.instances[1]
+    act(() => failed.emit('run.status', {
+      status: 'failed', queue_position: 0, progress: null,
+      error: { code: 'EXPECTED', message: '受控失败' },
+    }))
+    expect(handlers['run.failed']).toHaveBeenCalledWith({ code: 'EXPECTED', message: '受控失败' })
+    expect(failed.closed).toBe(true)
+
+    renderHook(() => useRunStream('run_cancelled_snapshot', handlers))
+    const cancelled = MockEventSource.instances[2]
+    act(() => cancelled.emit('run.status', {
+      status: 'cancelled', queue_position: 0, progress: null,
+    }))
+    expect(handlers['run.cancelled']).toHaveBeenCalledWith({})
+    expect(cancelled.closed).toBe(true)
+  })
+
   it('run.failed 携带 code/message 并关连接', () => {
     const handlers: RunEventHandlers = {
       'run.failed': vi.fn(),

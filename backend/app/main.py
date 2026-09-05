@@ -10,11 +10,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .artifacts import router as artifacts_router
@@ -33,6 +34,14 @@ from .tts.routes import make_tts_handler, router as tts_router
 logger = logging.getLogger(__name__)
 
 SSE_HEARTBEAT_SECONDS = 5.0
+
+
+class E2ERunControl(BaseModel):
+    kind: str
+    delay_seconds: float = Field(default=0, ge=0, le=30)
+    failure_code: str | None = None
+    failure_message: str | None = None
+    download_available: bool = False
 
 
 class SPAStaticFiles(StaticFiles):
@@ -230,6 +239,33 @@ def create_app(*, settings: Settings | None = None, data_dir: Path | None = None
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    if resolved_settings.e2e_mode:
+        @application.post("/api/_e2e/run-control", include_in_schema=False)
+        async def arm_e2e_run_control(payload: E2ERunControl, request: Request):
+            result_patch: dict[str, Any] = {}
+            if payload.download_available:
+                result_patch = {
+                    "audio_url": f"{str(request.base_url).rstrip('/')}/api/_e2e/audio.wav",
+                    "expires_at": int(time.time() * 1000) + 60_000,
+                    "request_id": "e2e-download",
+                    "source_duration": 1.0,
+                }
+            manager: RunManager = request.app.state.runs
+            manager.arm_e2e_control(
+                payload.kind,
+                delay_seconds=payload.delay_seconds,
+                failure_code=payload.failure_code,
+                failure_message=payload.failure_message,
+                result_patch=result_patch,
+            )
+            return {"armed": True, "kind": payload.kind}
+
+        @application.get("/api/_e2e/audio.wav", include_in_schema=False)
+        async def e2e_audio_fixture():
+            from .tts.audio import silence_wav
+
+            return Response(content=silence_wav(1.0), media_type="audio/wav")
 
     # ---------------- 生产托管 ----------------
 

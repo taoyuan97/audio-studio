@@ -9,6 +9,7 @@ Windows 下双击即可运行，无需命令行操作。
 | `start-all.bat` | 前后端同时启动（两个独立窗口），前端就绪后自动打开默认浏览器 |
 | `start-backend.bat` | 仅启动后端（FastAPI/uvicorn，`http://localhost:8000`，API 文档 `/docs`） |
 | `start-frontend.bat` | 仅启动前端（Vite dev，`http://localhost:5173/`），就绪后自动打开浏览器 |
+| `start-production.bat` | 构建前端并以单进程托管前端、API、SSE 和音频（`http://localhost:8000`） |
 | `stop-all.bat` | 停止全部服务并关闭窗口（见下方停止机制） |
 
 ## 首次使用前

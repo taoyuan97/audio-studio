@@ -400,6 +400,8 @@ export interface RunStatusEvent {
   status: RunStatusValue
   queue_position: number
   progress: RunProgress | null
+  artifact_id?: string | null
+  error?: ApiErrorBody | null
 }
 
 export interface AssistantDeltaEvent {

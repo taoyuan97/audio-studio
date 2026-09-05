@@ -87,7 +87,27 @@ class RunManager:
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self._cancelled: set[str] = set()
         self._started: set[str] = set()  # 已出队（含 running）的 run
+        self._e2e_controls: dict[str, dict[str, Any]] = {}
         self._worker_task: asyncio.Task | None = None
+
+    def arm_e2e_control(
+        self,
+        kind: str,
+        *,
+        delay_seconds: float = 0,
+        failure_code: str | None = None,
+        failure_message: str | None = None,
+        result_patch: dict[str, Any] | None = None,
+    ) -> None:
+        """为下一次指定类型的 run 注入延迟/失败；只由 E2E 专用端点调用。"""
+        if kind not in self._handlers:
+            raise ApiError("RUN_KIND_UNKNOWN", f"未知任务类型: {kind}", 422)
+        self._e2e_controls[kind] = {
+            "delay_seconds": delay_seconds,
+            "failure_code": failure_code,
+            "failure_message": failure_message,
+            "result_patch": result_patch or {},
+        }
 
     # ---------------- 生命周期 ----------------
 
@@ -224,6 +244,21 @@ class RunManager:
         try:
             if handler is None:
                 raise ApiError("RUN_KIND_UNKNOWN", f"未知任务类型: {run['kind']}", 422)
+            control = self._e2e_controls.pop(run["kind"], None)
+            if control:
+                delay_seconds = float(control.get("delay_seconds") or 0)
+                if delay_seconds > 0:
+                    await ctx.sleep(delay_seconds)
+                result_patch = control.get("result_patch") or {}
+                if result_patch:
+                    current = self.repo.get_run(run_id).get("result") or {}
+                    self.repo.set_run_result(run_id, {**current, **result_patch})
+                if control.get("failure_code"):
+                    raise ApiError(
+                        str(control["failure_code"]),
+                        str(control.get("failure_message") or "E2E 注入失败"),
+                        502,
+                    )
             artifact_id = await handler(ctx)
             if self.repo.finish_run(run_id, "completed", artifact_id=artifact_id):
                 await self.publish(
