@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import subprocess
 import time
@@ -32,6 +33,8 @@ PUBLIC_FFMPEG_ERROR = "混音处理失败，请检查音频文件后重试"
 class MixdownJobRequest(BaseModel):
     voice_artifact_id: str | None = None
     bgm_artifact_id: str | None = None
+    voice_speed: float = 1.0
+    bgm_speed: float = 1.0
     voice_gain: int = 80
     bgm_gain: int = 45
     bgm_offset: float = 0
@@ -50,20 +53,32 @@ def _seconds(value: float) -> str:
     return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
+def _tempo(value: float) -> str:
+    return f"{value:.4f}"
+
+
+def effective_duration(duration: float, speed: float) -> float:
+    return duration / speed
+
+
 def build_filter_graph(
     *,
     voice_duration: float,
     bgm_duration: float,
+    voice_speed: float,
+    bgm_speed: float,
     voice_gain: int,
     bgm_gain: int,
     bgm_offset: float,
     ducking: bool,
 ) -> str:
     """构建双轨滤镜图；输入 0 为 voice，输入 1 为 bgm。"""
-    target = _seconds(voice_duration)
+    voice_effective_duration = effective_duration(voice_duration, voice_speed)
+    bgm_effective_duration = effective_duration(bgm_duration, bgm_speed)
+    target = _seconds(voice_effective_duration)
     offset_ms = round(bgm_offset * 1000)
     voice = (
-        f"[0:a]volume={voice_gain / 100:.4f},aresample=48000,"
+        f"[0:a]atempo={_tempo(voice_speed)},volume={voice_gain / 100:.4f},aresample=48000,"
         "asetpts=PTS-STARTPTS"
     )
     if ducking:
@@ -71,12 +86,12 @@ def build_filter_graph(
     else:
         voice += "[voice_mix]"
 
-    if bgm_duration < voice_duration:
+    if bgm_effective_duration < voice_effective_duration:
         length_filter = f"aloop=loop=-1:size=2147483647,atrim=duration={target}"
     else:
         length_filter = f"atrim=duration={target}"
     background = (
-        f"[1:a]{length_filter},asetpts=PTS-STARTPTS,"
+        f"[1:a]atempo={_tempo(bgm_speed)},{length_filter},asetpts=PTS-STARTPTS,"
         f"adelay={offset_ms}:all=1,atrim=duration={target},"
         f"volume={bgm_gain / 100:.4f},aresample=48000[bgm_mix]"
     )
@@ -101,6 +116,8 @@ def build_ffmpeg_args(
     bgm_path: Path | None,
     voice_duration: float | None,
     bgm_duration: float | None,
+    voice_speed: float,
+    bgm_speed: float,
     voice_gain: int,
     bgm_gain: int,
     bgm_offset: float,
@@ -116,6 +133,8 @@ def build_ffmpeg_args(
         graph = build_filter_graph(
             voice_duration=voice_duration,
             bgm_duration=bgm_duration,
+            voice_speed=voice_speed,
+            bgm_speed=bgm_speed,
             voice_gain=voice_gain,
             bgm_gain=bgm_gain,
             bgm_offset=bgm_offset,
@@ -126,13 +145,18 @@ def build_ffmpeg_args(
             "-filter_complex", graph, "-map", "[mixout]",
         ]
     elif voice_path is not None:
-        # 单人声语义为透传重编码；混音调节只在双轨组合中生效。
-        args += ["-i", str(voice_path), "-map", "0:a:0", "-af", "aresample=48000"]
+        args += [
+            "-i", str(voice_path), "-map", "0:a:0", "-af",
+            f"atempo={_tempo(voice_speed)},volume={voice_gain / 100:.4f},aresample=48000",
+        ]
     elif bgm_path is not None:
         args += ["-i", str(bgm_path), "-map", "0:a:0"]
-        if bgm_format == output_format:
+        if bgm_speed == 1.0 and bgm_gain == 100 and bgm_format == output_format:
             return [*args, "-c:a", "copy", "-f", output_format, str(output_path)]
-        args += ["-af", "aresample=48000"]
+        args += [
+            "-af",
+            f"atempo={_tempo(bgm_speed)},volume={bgm_gain / 100:.4f},aresample=48000",
+        ]
     else:
         raise ValueError("至少需要一条音轨")
 
@@ -168,6 +192,13 @@ def _snapshot(payload: MixdownJobRequest, repo: Repository) -> tuple[dict[str, A
         raise invalid("MIX_INPUT_INVALID", "输出格式仅支持 MP3 或 WAV")
     if not 0 <= payload.voice_gain <= 100 or not 0 <= payload.bgm_gain <= 100:
         raise invalid("MIX_INPUT_INVALID", "音量必须在 0～100 之间")
+    if (
+        not math.isfinite(payload.voice_speed)
+        or not math.isfinite(payload.bgm_speed)
+        or not 0.5 <= payload.voice_speed <= 2.0
+        or not 0.5 <= payload.bgm_speed <= 2.0
+    ):
+        raise invalid("MIX_INPUT_INVALID", "倍速必须在 0.5～2.0 之间")
     if not 0 <= payload.bgm_offset <= 60:
         raise invalid("MIX_INPUT_INVALID", "背景偏移必须在 0～60 秒之间")
     voice = _input_artifact(repo, payload.voice_artifact_id, "voice")
@@ -175,8 +206,10 @@ def _snapshot(payload: MixdownJobRequest, repo: Repository) -> tuple[dict[str, A
     snapshot = {
         "voice_artifact_id": payload.voice_artifact_id,
         "bgm_artifact_id": payload.bgm_artifact_id,
-        "voice_gain": payload.voice_gain,
-        "bgm_gain": payload.bgm_gain,
+        "voice_speed": payload.voice_speed if voice else 1.0,
+        "bgm_speed": payload.bgm_speed if bgm else 1.0,
+        "voice_gain": payload.voice_gain if voice else 80,
+        "bgm_gain": payload.bgm_gain if bgm else 45,
         "bgm_offset": payload.bgm_offset if voice and bgm else 0,
         "ducking": payload.ducking if voice and bgm else False,
         "format": payload.format,
@@ -287,7 +320,11 @@ def make_mixdown_handler(repo: Repository, settings_store: SettingsStore, audio_
         final = audio_dir / "artifacts" / f"{artifact_id}.{snapshot['format']}"
         part = final.with_suffix(final.suffix + ".part")
         artifact_created = False
-        expected_duration = float((voice or bgm)["audio"]["duration"])
+        expected_duration = (
+            effective_duration(float(voice["audio"]["duration"]), snapshot["voice_speed"])
+            if voice
+            else effective_duration(float(bgm["audio"]["duration"]), snapshot["bgm_speed"])
+        )
         try:
             await _emit_phase(repo, ctx, "prep")
             args = build_ffmpeg_args(
@@ -295,6 +332,8 @@ def make_mixdown_handler(repo: Repository, settings_store: SettingsStore, audio_
                 bgm_path=bgm_path,
                 voice_duration=float(voice["audio"]["duration"]) if voice else None,
                 bgm_duration=float(bgm["audio"]["duration"]) if bgm else None,
+                voice_speed=snapshot["voice_speed"],
+                bgm_speed=snapshot["bgm_speed"],
                 voice_gain=snapshot["voice_gain"],
                 bgm_gain=snapshot["bgm_gain"],
                 bgm_offset=snapshot["bgm_offset"],

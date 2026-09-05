@@ -28,5 +28,7 @@ describe('mixRuleText', () => {
     expect(mixRuleText(voice, track('bgm', 20))).toContain('循环填充')
     expect(mixRuleText(voice, track('bgm', 80))).toContain('截断')
     expect(mixRuleText(voice, track('bgm', 60))).toContain('等长')
+    expect(mixRuleText(voice, track('bgm', 80), 2, 2)).toContain('截断')
+    expect(mixRuleText(voice, track('bgm', 80), 0.5, 2)).toContain('循环填充')
   })
 })

@@ -26,6 +26,8 @@ const PARAM_LABELS: Record<string, string> = {
   source_duration: '源音乐时长（秒）',
   voice_artifact_id: '人声产物 ID',
   bgm_artifact_id: '背景音产物 ID',
+  voice_speed: '人声倍速',
+  bgm_speed: '背景倍速',
   voice_gain: '人声增益',
   bgm_gain: '背景增益',
   bgm_offset: '背景偏移（秒）',

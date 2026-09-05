@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.2
+- 版本：v2.3
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v2.3 扩展 T012 混音请求：人声/背景独立倍速、默认值与范围、单轨参数和有效时长规范化语义
 - 变更记录：v2.2 增加 T011 阿里云自定义音色库 CRUD、按模型合并 defaults、试听验证状态与模型感知缓存；TTS 任务冻结提交时模型快照
 - 变更记录：v2.1 校准 T006/T007 实施状态，并明确所有设置 POST/PATCH/DELETE（含 Provider probe）执行本机 Origin 校验
 - 变更记录：v2.0 开放 MiniMax API Key 与模型 ID 的浏览器写入；运行时 Key 支持按需回显和清除，`.env` Key 仍禁止回显
@@ -31,7 +32,7 @@
 | 第 6 节 | artifacts 基座、音频/peaks、脚本版本查看与恢复 | 已实现（T002 基座 + T003 扩展） | T002/T003 |
 | 第 7 节 | TTS | 已实现；阿里云自定义音色库已接入，火山真实联调延期 | T004/T011 |
 | 第 8 节 | BGM | 已实现；真实 MiniMax smoke 因 Key/账号权限阻塞 | T005 |
-| 第 9 节 | 混音 | 已实现 | T006 |
+| 第 9 节 | 混音 | 已实现（含分轨倍速与单轨参数一致性） | T006/T012 |
 | 第 10 节 | 设置状态、浏览器编辑与探测 | 已实现 | T007 |
 | 第 11 节 | 通用 run、剧本、TTS、BGM 与混音事件 | 已实现 | T002–T006 |
 | 第 12 节 | 错误码目标全集；随对应业务任务逐步实现 | 部分实现 | T002–T007 |
@@ -597,6 +598,8 @@ SSE 事件流（协议见第 11 节）。
 {
   "voice_artifact_id": "art_...",
   "bgm_artifact_id": "art_...",
+  "voice_speed": 1.0,
+  "bgm_speed": 1.0,
   "voice_gain": 80,
   "bgm_gain": 45,
   "bgm_offset": 0,
@@ -605,7 +608,9 @@ SSE 事件流（协议见第 11 节）。
 }
 ```
 
-- 校验：两轨至少其一（`MIX_INPUT_MISSING`，422）；`*_gain` 0–100；`bgm_offset` 0–60 秒；id 必须存在且类型正确（voice→`voice`、bgm→`bgm`，`MIX_INPUT_INVALID`，422）。
+- 默认值：`voice_speed=1.0`、`bgm_speed=1.0`、`voice_gain=80`、`bgm_gain=45`、`bgm_offset=0`、`ducking=true`、`format=mp3`。旧客户端省略倍速字段时保持原速。
+- 校验：两轨至少其一（`MIX_INPUT_MISSING`，422）；`*_speed` 必须是有限数值且处于 `0.5～2.0` 闭区间；`*_gain` 0–100；`bgm_offset` 0–60 秒；id 必须存在且类型正确（voice→`voice`、bgm→`bgm`，`MIX_INPUT_INVALID`，422）。
+- 规范化快照：未选择的轨道将对应倍速规范化为 `1.0`；仅单轨时 `bgm_offset=0`、`ducking=false`。双轨成品时长为 `voice 源时长 / voice_speed`，背景按 `bgm 源时长 / bgm_speed` 循环或截断；仅单轨时输出时长为对应源时长除以对应倍速。倍速和对应增益在三种轨道组合中均生效。
 - 响应 202：run 载荷（`kind: "mixdown"`）。409 同 7.3（`MIX_RUN_ACTIVE`）。
 
 ## 10. 设置线

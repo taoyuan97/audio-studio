@@ -359,6 +359,8 @@ export interface RetryMusicJobRequest {
 export interface SubmitMixdownJobRequest {
   voice_artifact_id?: string | null
   bgm_artifact_id?: string | null
+  voice_speed?: number
+  bgm_speed?: number
   voice_gain?: number
   bgm_gain?: number
   bgm_offset?: number

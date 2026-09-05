@@ -8,6 +8,7 @@
 .mix-field > label { display: flex; justify-content: space-between; margin-bottom: 9px; color: var(--text-2); font-size: 13px; }
 .mix-field > label span, .mix-switch-row small { color: var(--text-3); font-size: 11px; }
 .mix-field > label b { color: var(--accent-strong); font-family: var(--mono); font-weight: 500; }
+.mix-field > small { display: block; margin-top: -4px; color: var(--text-3); font-size: 11px; }
 .mix-track-option { display: flex; flex-direction: column; padding: 2px 0; }
 .mix-track-option span { color: var(--text-3); font-size: 11px; }
 .mix-rule { margin-bottom: 20px; }
@@ -23,11 +24,13 @@
 .mix-summary { display: flex; flex-direction: column; gap: 5px; padding: 13px; background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius-s); color: var(--text-2); }
 .mix-summary strong { color: var(--text); }
 .mix-waveforms { display: flex; flex-direction: column; gap: 14px; padding: 16px; background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: var(--radius-s); }
-.mix-waveform-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 10px; }
-.mix-waveform-row > span { color: var(--text-3); font-size: 12px; }
+.mix-waveform-row { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: center; gap: 10px; }
+.mix-waveform-row > span { display: flex; flex-direction: column; color: var(--text-3); font-size: 12px; }
+.mix-waveform-row > span strong { color: var(--text-2); font-weight: 500; }
+.mix-waveform-row > span small { font-family: var(--mono); font-size: 10px; }
 .mix-waveform-timeline { display: flex; min-width: 0; height: 64px; }
 .mix-waveform-timeline > b { flex: 0 0 auto; border-right: 1px dashed var(--purple); background: color-mix(in srgb, var(--purple) 8%, transparent); }
-.mix-waveform-timeline .mix-waveform-bars { flex: 1; min-width: 0; }
+.mix-waveform-timeline .mix-waveform-bars { flex: 0 0 auto; min-width: 0; }
 .mix-waveform-bars { display: flex; align-items: center; gap: 2px; height: 64px; overflow: hidden; }
 .mix-waveform-bars i { flex: 1; min-width: 1px; border-radius: 2px; background: var(--accent); opacity: 0.82; }
 .mix-waveform-bars.bgm i { background: var(--purple); }

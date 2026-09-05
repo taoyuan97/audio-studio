@@ -34,6 +34,8 @@ def payload(voice_id=None, bgm_id=None, **overrides):
     value = {
         "voice_artifact_id": voice_id,
         "bgm_artifact_id": bgm_id,
+        "voice_speed": 1.0,
+        "bgm_speed": 1.0,
         "voice_gain": 80,
         "bgm_gain": 45,
         "bgm_offset": 0,
@@ -57,12 +59,16 @@ def test_filter_graph_matrix():
     looped = build_filter_graph(
         voice_duration=60,
         bgm_duration=20,
+        voice_speed=2,
+        bgm_speed=0.5,
         voice_gain=80,
         bgm_gain=45,
         bgm_offset=2.5,
         ducking=True,
     )
-    assert "aloop=loop=-1" in looped
+    assert "aloop=loop=-1" not in looped
+    assert "[0:a]atempo=2.0000" in looped
+    assert "[1:a]atempo=0.5000" in looped
     assert "adelay=2500:all=1" in looped
     assert "volume=0.8000" in looped and "volume=0.4500" in looped
     assert "sidechaincompress=threshold=0.03:ratio=4:attack=50:release=400" in looped
@@ -71,32 +77,46 @@ def test_filter_graph_matrix():
     trimmed = build_filter_graph(
         voice_duration=20,
         bgm_duration=60,
+        voice_speed=0.5,
+        bgm_speed=2,
         voice_gain=100,
         bgm_gain=100,
         bgm_offset=0,
         ducking=False,
     )
-    assert "aloop" not in trimmed
-    assert "atrim=duration=20" in trimmed
+    assert "aloop=loop=-1" in trimmed
+    assert "atrim=duration=40" in trimmed
     assert "sidechaincompress" not in trimmed
 
 
 def test_single_track_argument_rules(tmp_path: Path):
     voice_args = build_ffmpeg_args(
         voice_path=tmp_path / "voice.wav", bgm_path=None,
-        voice_duration=1, bgm_duration=None, voice_gain=20, bgm_gain=40,
+        voice_duration=1, bgm_duration=None, voice_speed=1.25, bgm_speed=1,
+        voice_gain=20, bgm_gain=40,
         bgm_offset=12, ducking=True, output_format="mp3", output_path=tmp_path / "out.mp3.part",
     )
     assert "libmp3lame" in voice_args and "320k" in voice_args
-    assert not any("volume=" in item or "adelay=" in item for item in voice_args)
+    assert any("atempo=1.2500,volume=0.2000" in item for item in voice_args)
+    assert not any("adelay=" in item for item in voice_args)
 
     bgm_args = build_ffmpeg_args(
         voice_path=None, bgm_path=tmp_path / "bgm.wav",
-        voice_duration=None, bgm_duration=1, voice_gain=20, bgm_gain=40,
+        voice_duration=None, bgm_duration=1, voice_speed=1, bgm_speed=0.75,
+        voice_gain=20, bgm_gain=40,
         bgm_offset=12, ducking=True, output_format="wav", output_path=tmp_path / "out.wav.part",
         bgm_format="wav",
     )
-    assert "copy" in bgm_args
+    assert "copy" not in bgm_args
+    assert any("atempo=0.7500,volume=0.4000" in item for item in bgm_args)
+
+    copied_bgm_args = build_ffmpeg_args(
+        voice_path=None, bgm_path=tmp_path / "bgm.wav",
+        voice_duration=None, bgm_duration=1, voice_speed=1, bgm_speed=1,
+        voice_gain=20, bgm_gain=100, bgm_offset=0, ducking=False,
+        output_format="wav", output_path=tmp_path / "copied.wav.part", bgm_format="wav",
+    )
+    assert "copy" in copied_bgm_args
 
 
 @pytest.mark.parametrize(
@@ -104,6 +124,8 @@ def test_single_track_argument_rules(tmp_path: Path):
     [
         ({}, "MIX_INPUT_MISSING"),
         ({"voice_gain": 101, "voice_artifact_id": "art_missing"}, "MIX_INPUT_INVALID"),
+        ({"voice_speed": 0.49, "voice_artifact_id": "art_missing"}, "MIX_INPUT_INVALID"),
+        ({"bgm_speed": 2.01, "voice_artifact_id": "art_missing"}, "MIX_INPUT_INVALID"),
         ({"bgm_offset": -1, "voice_artifact_id": "art_missing"}, "MIX_INPUT_INVALID"),
         ({"format": "flac", "voice_artifact_id": "art_missing"}, "MIX_INPUT_INVALID"),
     ],
@@ -119,6 +141,21 @@ def test_track_type_validation(client, app):
     response = client.post("/api/mixdown/jobs", json=payload(bgm_id=voice["id"]))
     assert response.status_code == 422
     assert response.json()["code"] == "MIX_INPUT_INVALID"
+
+
+def test_speed_defaults_and_absent_track_values_are_normalized(client, app, monkeypatch):
+    voice = create_voice_artifact(app)
+    monkeypatch.setattr("app.mixdown.find_ffmpeg", lambda _path="": "ffmpeg")
+    monkeypatch.setattr("app.mixdown.find_ffprobe", lambda _path="": "ffprobe")
+    request_payload = payload(voice_id=voice["id"], bgm_speed=1.8, bgm_gain=99)
+    request_payload.pop("voice_speed")
+    response = client.post("/api/mixdown/jobs", json=request_payload)
+    assert response.status_code == 202
+    run = app.state.repository.get_run(response.json()["run_id"])
+    snapshot = run["result"]["request"]
+    assert snapshot["voice_speed"] == 1.0
+    assert snapshot["bgm_speed"] == 1.0
+    assert snapshot["bgm_gain"] == 45
 
 
 def test_missing_ffmpeg_rejected_without_creating_run(tmp_path: Path):
@@ -166,7 +203,7 @@ def test_real_ffmpeg_dual_track_duration_and_events(client, app, monkeypatch, bg
     monkeypatch.setattr(mixdown, "_run_cancellable", observable_run)
     response = client.post(
         "/api/mixdown/jobs",
-        json=payload(voice["id"], bgm["id"], bgm_offset=0.03),
+        json=payload(voice["id"], bgm["id"], voice_speed=0.5, bgm_speed=2, bgm_offset=0.03),
     )
     assert response.status_code == 202
     run_id = response.json()["run_id"]
@@ -182,8 +219,10 @@ def test_real_ffmpeg_dual_track_duration_and_events(client, app, monkeypatch, bg
     assert run["progress"]["stage"] == "encode"
     artifact = app.state.repository.get_artifact(run["artifact_id"])
     assert artifact["type"] == "mix"
-    assert artifact["audio"]["duration"] == pytest.approx(voice["audio"]["duration"], abs=0.05)
+    assert artifact["audio"]["duration"] == pytest.approx(voice["audio"]["duration"] / 0.5, abs=0.05)
     assert artifact["params"]["ducking"] is True
+    assert artifact["params"]["voice_speed"] == 0.5
+    assert artifact["params"]["bgm_speed"] == 2
 
 
 def test_real_ffmpeg_single_track_combinations(client, app):
@@ -193,8 +232,8 @@ def test_real_ffmpeg_single_track_combinations(client, app):
     voice = create_voice_artifact(app)
     bgm = create_bgm_artifact(app, seconds=0.12)
     for request_payload, output_format, expected_duration in (
-        (payload(voice_id=voice["id"], format="mp3"), "mp3", voice["audio"]["duration"]),
-        (payload(bgm_id=bgm["id"], format="wav"), "wav", bgm["audio"]["duration"]),
+        (payload(voice_id=voice["id"], voice_speed=2, format="mp3"), "mp3", voice["audio"]["duration"] / 2),
+        (payload(bgm_id=bgm["id"], bgm_speed=0.5, format="wav"), "wav", bgm["audio"]["duration"] / 0.5),
     ):
         response = client.post("/api/mixdown/jobs", json=request_payload)
         assert response.status_code == 202

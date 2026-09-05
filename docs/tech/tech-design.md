@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.2
-- 状态：设计已确认、T011 已完成并验收通过
+- 版本：v2.3
+- 状态：设计已确认、T012 已完成并通过自动化验收
 - 创建日期：2026-08-26
+- 变更记录：v2.3 增加 T012 混音分轨倍速：人声/背景独立 `atempo`、有效时长与成品时间轴规则、单轨增益一致性和预览边界
 - 变更记录：v2.2 增加 T011 阿里云自定义音色库：SQLite 按模型持久化、设置页独立 Tab、试听验证状态、模型感知缓存与 TTS 模型快照一致性
 - 变更记录：v2.1 完成 T006/T007 状态校准；首页移除快速开始，侧边栏增加分业务线运行态徽标，设置探测补齐本机 Origin 校验，真实 Provider 联调归入 T008
 - 变更记录：v2.0 开放 MiniMax API Key 与模型 ID 的浏览器编辑、回显和清除；BGM defaults 与任务开始时快照读取运行时模型 ID
@@ -17,7 +18,7 @@
 - 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
 - 变更记录：v1.2 API 契约与数据模型拆分为独立文档（`api-contract.md` / `data-model.md`，实现级单一事实源），本文 5.2/5.4 改为摘要概览
 - 变更记录：v1.1 吸收 meditation-guide-studio（`C:\projects\apps\meditation-guide-studio`）已验证实现——TTS 双引擎接入代码移植、情绪 instruction 映射定论、SSML break/静音切分双策略、音频落盘原子化规范、run 进度持久化、MiniMax 同步接口修正（E1）与计费安全重试（E8）、48kHz 基准（E2）、呼吸停顿 4s/5s（E4）
-- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T009`（任务拆分）
+- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T012`（任务拆分）
 - 技术栈基准：`article-studio/docs/tech/tech-design.md`
 - 交互基准：`prototype/`（已验收原型，前端功能语义来源）
 
@@ -247,17 +248,19 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 ### 5.8 混音线设计（`app/ffmpeg.py` + `app/mixdown.py`）
 
 - **职责边界**：T002 只提供 `find_ffmpeg/find_ffprobe/ffmpeg_version/run_ffmpeg` 底层工具；T006 在混音提交前按 `FFMPEG_PATH` 检查并映射脱敏后的 `MIX_FFMPEG_MISSING/MIX_FFMPEG_ERROR`；T007 负责启动/设置状态中的 ffmpeg、ffprobe 可用性与版本探测。
-- **滤镜链**（人声+背景，均有偏移/音量）：
+- **滤镜链**（人声+背景，分轨倍速均保持原音调）：
   ```text
-  [bgm] aloop/循环填充或 atrim 截断 → adelay=offset → volume=bgm_gain
-  [voice] volume=voice_gain
-  ducking=on: sidechaincompress(voice 为 sidechain, bgm 被压缩)  # 模式 B
+  [voice] atempo=voice_speed → volume=voice_gain → aresample → 时间戳归零
+  [bgm] atempo=bgm_speed → 按有效时长 aloop/循环填充或 atrim 截断
+        → 时间戳归零 → adelay=offset → 截断到成品长度 → volume=bgm_gain → aresample
+  ducking=on: sidechaincompress(变速后 voice 为 sidechain, 变速后 bgm 被压缩)  # 模式 B
   → amix / amerge → 输出
   ```
-  参数默认值：threshold≈0.03、ratio≈4、attack≈50ms、release≈400ms（实施期微调）。
-- **组合规则**：仅人声 → 透传重编码；仅背景 → 原样导出；单轨或 ducking=off → 跳过 sidechain；背景短于人声 `aloop` 循环填充，长则 `atrim` 截断（前端规则提示由产物参数推导展示）。
-- **导出**：MP3（libmp3lame 320k）/ WAV（pcm_s16le 48kHz，E2）；中间与最终文件均按 5.6 落盘工程规范原子落盘 + ffprobe 复验。
-- **波形峰值（B6）**：`peaks.py` —— 16bit WAV 用 Python `wave` 原生读取；MP3/其他格式用 ffmpeg 解码为 8kHz 单声道 PCM；随后分桶取最大幅度（≤1200 桶）并原子缓存于 `peaks/{id}.json`。`GET /api/artifacts/{id}/peaks` 命中缓存直接返回。双轨预览 = 前端分别取两轨 peaks 叠放绘制。`FFMPEG_PATH` 透传缺口见 ISSUE-003。
+  分轨倍速范围 `0.5～2.0`、步长 `0.05`、默认 `1.0`；闪避参数默认 threshold≈0.03、ratio≈4、attack≈50ms、release≈400ms。
+- **有效时长与组合规则**：`voice_effective_duration=voice_duration/voice_speed`，`bgm_effective_duration=bgm_duration/bgm_speed`。双轨成品以变速后人声长度为终点，背景按两个有效时长的比较结果循环或截断，`bgm_offset` 只延后背景起点、不延长成品；单轨输出为对应源时长除以对应倍速，且对应增益生效。单轨或 ducking=off 跳过 sidechain。
+- **单轨与兼容性**：仅人声执行 `atempo + volume + aresample` 后重编码；仅背景执行对应滤镜后重编码，仅在 `bgm_speed=1.0`、`bgm_gain=100` 且输入输出格式一致时允许 stream copy。倍速省略时默认为 `1.0`；参数只进入 run/mix 产物快照，不修改源产物。
+- **导出**：MP3（libmp3lame 320k）/ WAV（pcm_s16le 48kHz，E2）；中间与最终文件均按 5.6 落盘工程规范原子落盘 + ffprobe 复验，输出时长按有效时长复验。
+- **波形峰值（B6）**：`peaks.py` —— 16bit WAV 用 Python `wave` 原生读取；MP3/其他格式用 ffmpeg 解码为 8kHz 单声道 PCM；随后分桶取最大幅度（≤1200 桶）并原子缓存于 `peaks/{id}.json`。`GET /api/artifacts/{id}/peaks` 命中缓存直接返回。双轨预览由前端分别取两轨 peaks，并按分轨有效时长和背景偏移绘制时间轴；本期不做浏览器实时混音或提交前同步试听。
 
 ### 5.9 设置线设计
 

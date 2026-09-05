@@ -16,7 +16,7 @@ vi.mock('../api/artifacts', () => ({ listArtifacts: mocks.list, getArtifact: moc
 vi.mock('../api/mixdown', () => ({ submitMixdownJob: mocks.submit }))
 vi.mock('../api/runs', () => ({ cancelRun: mocks.cancel }))
 vi.mock('../lib/sse', () => ({ useRunStream: (_id: string | null, handlers: typeof mocks.handlers) => { mocks.handlers = handlers } }))
-vi.mock('../features/mixdown/DualTrackWaveform', () => ({ default: ({ bgmOffset }: { bgmOffset: number }) => <div>双轨波形 · 偏移 {bgmOffset}</div> }))
+vi.mock('../features/mixdown/DualTrackWaveform', () => ({ default: ({ bgmOffset, voiceSpeed, bgmSpeed }: { bgmOffset: number; voiceSpeed: number; bgmSpeed: number }) => <div>双轨波形 · 偏移 {bgmOffset} · 人声 {voiceSpeed}x · 背景 {bgmSpeed}x</div> }))
 vi.mock('../components/WaveformView', () => ({ default: () => <div>成品波形</div> }))
 vi.mock('../components/AudioPlayer', () => ({ default: () => <div>播放器</div> }))
 
@@ -27,7 +27,7 @@ function artifact(type: 'voice' | 'bgm' | 'mix', duration: number): Artifact {
     name: type === 'voice' ? '测试人声' : type === 'bgm' ? '测试背景' : '测试成品',
     conversation_id: null,
     source_run_id: null,
-    params: type === 'mix' ? { voice_gain: 80, bgm_gain: 45, bgm_offset: 0, ducking: true } : {},
+    params: type === 'mix' ? { voice_speed: 1, bgm_speed: 1, voice_gain: 80, bgm_gain: 45, bgm_offset: 0, ducking: true } : {},
     content: null,
     audio: { format: 'wav', duration, url: '/audio', peaks_url: '/peaks' },
     created_at: 1,
@@ -54,10 +54,11 @@ describe('MixdownPage', () => {
   it('preselects query tracks, shows loop rule, and submits the complete payload', async () => {
     const user = userEvent.setup()
     renderPage('/mixdown?voice_id=art_voice&bgm_id=art_bgm')
-    expect((await screen.findAllByText('背景短于人声：将循环填充至人声结束。')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('变速后背景短于人声：将循环填充至人声结束。')).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: /开始混音/ }))
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledWith({
-      voice_artifact_id: 'art_voice', bgm_artifact_id: 'art_bgm', voice_gain: 80,
+      voice_artifact_id: 'art_voice', bgm_artifact_id: 'art_bgm', voice_speed: 1,
+      bgm_speed: 1, voice_gain: 80,
       bgm_gain: 45, bgm_offset: 0, ducking: true, format: 'mp3',
     }))
     act(() => mocks.handlers['mix.progress']?.({ phase: 'ducking' } as never))
@@ -78,8 +79,20 @@ describe('MixdownPage', () => {
     const clearButtons = container.querySelectorAll<HTMLElement>('.ant-select-clear')
     expect(clearButtons).toHaveLength(2)
     await user.click(clearButtons[0]!)
-    expect((await screen.findAllByText('仅背景：格式一致时原样导出，否则按所选格式重编码。')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText(/仅背景：应用倍速与音量后导出/)).length).toBeGreaterThan(0)
     await user.click(clearButtons[1]!)
     expect(screen.getByRole('button', { name: /开始混音/ })).toBeDisabled()
+  })
+
+  it('enables both independent speed controls for selected tracks', async () => {
+    renderPage('/mixdown?voice_id=art_voice&bgm_id=art_bgm')
+    const voiceSpeed = await screen.findByRole('slider', { name: '人声倍速' })
+    const bgmSpeed = screen.getByRole('slider', { name: '背景倍速' })
+    expect(voiceSpeed).toHaveAttribute('aria-valuemin', '0.5')
+    expect(voiceSpeed).toHaveAttribute('aria-valuemax', '2')
+    expect(voiceSpeed).toHaveAttribute('aria-valuenow', '1')
+    expect(bgmSpeed).toHaveAttribute('aria-valuenow', '1')
+    expect(voiceSpeed).not.toHaveAttribute('aria-disabled', 'true')
+    expect(bgmSpeed).not.toHaveAttribute('aria-disabled', 'true')
   })
 })

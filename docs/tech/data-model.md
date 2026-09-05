@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.6
+- 版本：v1.7
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v1.7 扩展 T012 mix 参数快照：人声/背景独立倍速及有效时长语义
 - 变更记录：v1.6 增加 T011 `tts_custom_voices` 按模型持久化音色库、试听验证状态、模型感知缓存与删除生命周期
 - 变更记录：v1.5 明确仅 `settings.json` 中的浏览器凭据覆盖可按字段回显，`.env` 基线永不回显
 - 变更记录：v1.4 增加 T007 `DATA_DIR/settings.json` 运行时配置覆盖的布局、优先级与敏感数据规则
@@ -299,6 +300,8 @@ CREATE INDEX idx_tts_custom_voices_model
 {
   "voice_artifact_id": "art_...",   // 可 null（纯音乐导出）；弱引用，源删除后保留 id 作历史记录
   "bgm_artifact_id": "art_...",     // 可 null
+  "voice_speed": 1.0,               // 0.5–2.0；未选人声时规范化为 1.0
+  "bgm_speed": 1.0,                 // 0.5–2.0；未选背景时规范化为 1.0
   "voice_gain": 80,                 // 0–100
   "bgm_gain": 45,                   // 0–100
   "bgm_offset": 0,                  // 0–60 秒
@@ -308,6 +311,8 @@ CREATE INDEX idx_tts_custom_voices_model
 ```
 
 `content_json`：`null`。`audio_path`：必有。
+
+倍速是 mix 成品的非破坏性处理快照，不修改所引用的 voice/bgm 产物。双轨 `audio.duration` 约等于 `voice 源时长 / voice_speed`；仅单轨时约等于对应源时长除以对应倍速。历史 mix 产物可能没有 `voice_speed`/`bgm_speed`，读取和展示时按 `1.0` 兼容，不执行数据迁移。
 
 ## 6. 文件布局（DATA_DIR）
 
