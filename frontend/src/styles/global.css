@@ -1,33 +1,12 @@
 /* ============================================================
-   AI 音频工作台 · 全局样式（暗色专业工具风，tokens 迁移自原型）
+   AI 音频工作台 · 中性经典暗色主题
+   颜色变量由 theme.ts 注入，确保业务 CSS 与 AntD 共用一套色板。
    ============================================================ */
 
 :root {
-  --bg: #0d1017;
-  --bg-soft: #11151f;
-  --panel: #161b26;
-  --panel-2: #1b2130;
-  --border: #262e40;
-  --border-soft: #1f2636;
-  --text: #e8ebf3;
-  --text-2: #a9b2c7;
-  --text-3: #6b7488;
-  --accent: #6f8cff;
-  --accent-strong: #8aa2ff;
-  --accent-soft: rgba(111, 140, 255, 0.14);
-  --teal: #2cc9a7;
-  --teal-soft: rgba(44, 201, 167, 0.14);
-  --purple: #b28cff;
-  --purple-soft: rgba(178, 140, 255, 0.14);
-  --blue: #5aa9e6;
-  --blue-soft: rgba(90, 169, 230, 0.14);
-  --amber: #e6b25a;
-  --amber-soft: rgba(230, 178, 90, 0.16);
-  --red: #e0635c;
-  --red-soft: rgba(224, 99, 92, 0.14);
-  --radius: 12px;
-  --radius-s: 8px;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  --radius: 8px;
+  --radius-s: 6px;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
   --mono: "Cascadia Code", Consolas, "Courier New", monospace;
 }
 
@@ -39,10 +18,7 @@ body,
 
 body {
   margin: 0;
-  background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(111, 140, 255, 0.06), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(44, 201, 167, 0.05), transparent 60%),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
   font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
@@ -55,7 +31,7 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a3247;
+  background: var(--border);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-track {
@@ -77,6 +53,7 @@ body {
   height: 100vh;
   min-height: 100vh;
   overflow: hidden;
+  background: var(--bg);
 }
 
 .app-sider {
@@ -87,6 +64,7 @@ body {
   height: 100vh;
   overflow-x: hidden;
   overflow-y: auto;
+  border-inline-end: 1px solid var(--border-soft);
 }
 
 .app-main {
@@ -118,13 +96,13 @@ body {
 .app-brand-logo {
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: var(--radius-s);
   flex-shrink: 0;
-  background: linear-gradient(135deg, var(--accent), var(--teal));
+  background: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--text-on-accent);
   font-size: 15px;
 }
 

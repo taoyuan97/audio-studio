@@ -8,13 +8,17 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { queryClient } from './lib/queryClient'
-import { themeTokens } from './styles/theme'
+import { themeCssVariables, themeTokens } from './styles/theme'
 import './styles/global.css'
 import './styles/meditation.css'
 import './styles/tts.css'
 import './styles/bgm.css'
 import './styles/mixdown.css'
 import './styles/library-dashboard.css'
+
+Object.entries(themeCssVariables).forEach(([name, value]) => {
+  document.documentElement.style.setProperty(name, value)
+})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

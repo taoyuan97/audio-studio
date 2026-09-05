@@ -100,7 +100,7 @@
   padding: 26px 28px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  background: linear-gradient(125deg, rgba(111, 140, 255, 0.14), rgba(44, 201, 167, 0.06));
+  background: var(--bg-soft);
 }
 
 .dashboard-hero h1 {
@@ -131,6 +131,7 @@
 
 .dashboard-module-card {
   cursor: pointer;
+  box-shadow: none;
 }
 
 .dashboard-module-card.is-deferred {

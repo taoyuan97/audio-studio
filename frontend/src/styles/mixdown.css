@@ -3,7 +3,7 @@
 .mix-page-head h2 { margin: 0; color: var(--text); font-size: 24px; }
 .mix-page-head p { margin: 8px 0 0; color: var(--text-2); }
 .mix-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 20px; }
-.mix-card { min-width: 0; border-color: var(--border); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18); }
+.mix-card { min-width: 0; border-color: var(--border); box-shadow: none; }
 .mix-field { margin-bottom: 20px; }
 .mix-field > label { display: flex; justify-content: space-between; margin-bottom: 9px; color: var(--text-2); font-size: 13px; }
 .mix-field > label span, .mix-switch-row small { color: var(--text-3); font-size: 11px; }
@@ -26,7 +26,7 @@
 .mix-waveform-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 10px; }
 .mix-waveform-row > span { color: var(--text-3); font-size: 12px; }
 .mix-waveform-timeline { display: flex; min-width: 0; height: 64px; }
-.mix-waveform-timeline > b { flex: 0 0 auto; border-right: 1px dashed var(--purple); background: rgba(139, 92, 246, 0.06); }
+.mix-waveform-timeline > b { flex: 0 0 auto; border-right: 1px dashed var(--purple); background: color-mix(in srgb, var(--purple) 8%, transparent); }
 .mix-waveform-timeline .mix-waveform-bars { flex: 1; min-width: 0; }
 .mix-waveform-bars { display: flex; align-items: center; gap: 2px; height: 64px; overflow: hidden; }
 .mix-waveform-bars i { flex: 1; min-width: 1px; border-radius: 2px; background: var(--accent); opacity: 0.82; }

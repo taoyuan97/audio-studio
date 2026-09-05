@@ -14,6 +14,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { getStats } from '../api/settings'
 import type { RunKind } from '../api/types'
 import StatusBanner from '../components/StatusBanner'
+import { darkPalette } from '../styles/theme'
 
 type NavItem = { key: string; label: string; icon: ReactNode; runKind?: RunKind }
 
@@ -51,8 +52,8 @@ export default function AppLayout() {
           <span>{item.label}</span>
           {(running > 0 || queued > 0) && (
             <span className="app-nav-run-badges" aria-label={statusLabel} title={statusLabel}>
-              {running > 0 && <Badge count={running} color="#1677ff" overflowCount={9} />}
-              {queued > 0 && <Badge count={queued} color="#d89614" overflowCount={9} />}
+              {running > 0 && <Badge count={running} color={darkPalette.primary} overflowCount={9} />}
+              {queued > 0 && <Badge count={queued} color={darkPalette.warning} overflowCount={9} />}
             </span>
           )}
         </span>

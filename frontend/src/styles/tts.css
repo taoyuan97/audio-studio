@@ -3,7 +3,7 @@
 .tts-page-head h2 { margin: 0; color: var(--text); font-size: 24px; }
 .tts-page-head p { margin: 8px 0 0; color: var(--text-2); }
 .tts-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
-.tts-card { min-width: 0; border-color: var(--border); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18); }
+.tts-card { min-width: 0; border-color: var(--border); box-shadow: none; }
 .tts-field { margin: 20px 0; }
 .tts-field > label { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--text-2); font-size: 13px; }
 .tts-field > label b { color: var(--accent-strong); font-family: var(--mono); font-weight: 500; }

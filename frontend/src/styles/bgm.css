@@ -3,7 +3,7 @@
 .bgm-page-head h2 { margin: 0; color: var(--text); font-size: 24px; }
 .bgm-page-head p { margin: 8px 0 0; color: var(--text-2); }
 .bgm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
-.bgm-card { min-width: 0; border-color: var(--border); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18); }
+.bgm-card { min-width: 0; border-color: var(--border); box-shadow: none; }
 .bgm-provider { display: flex; align-items: center; gap: 4px; margin-bottom: 14px; color: var(--text-3); font-size: 12px; }
 .bgm-provider span:last-child { margin-left: auto; }
 .bgm-suggestions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }

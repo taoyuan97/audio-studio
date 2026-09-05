@@ -39,7 +39,7 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.16);
+  box-shadow: none;
 }
 
 .meditation-list-page .conv-item.ant-list-item {
@@ -100,7 +100,7 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
+  box-shadow: none;
 }
 
 .workspace-grid .card-title-row {
@@ -181,7 +181,7 @@
 }
 
 .workspace-grid .msg.user .msg-bubble {
-  color: #fff;
+  color: var(--text-on-accent);
   background: var(--accent);
   border-radius: 12px 12px 3px;
 }
@@ -484,7 +484,7 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: #06251d;
+  color: var(--text-on-success);
   border: 1px solid var(--border);
   border-radius: 50%;
 }
@@ -586,11 +586,11 @@
 }
 
 .workspace-grid .tl-speech {
-  background: linear-gradient(180deg, #7d95ff, #5a74e6);
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
 }
 
 .workspace-grid .tl-pause {
-  background: #2c3450;
+  background: var(--border);
 }
 
 .workspace-grid .timeline-legend {
@@ -655,13 +655,13 @@
 .workspace-grid .mb-emotion {
   color: var(--purple);
   background: var(--purple-soft);
-  border-color: rgba(178, 140, 255, 0.28);
+  border-color: color-mix(in srgb, var(--purple) 36%, transparent);
 }
 
 .workspace-grid .mb-speed {
   color: var(--blue);
   background: var(--blue-soft);
-  border-color: rgba(90, 169, 230, 0.28);
+  border-color: color-mix(in srgb, var(--blue) 36%, transparent);
 }
 
 .workspace-grid .sv-pause {
