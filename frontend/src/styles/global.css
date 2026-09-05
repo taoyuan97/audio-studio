@@ -128,6 +128,21 @@ body {
   font-size: 15px;
 }
 
+.app-nav-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.app-nav-run-badges {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
 .app-brand-sub {
   margin-top: 2px;
   font-size: 11px;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import SettingsStore
@@ -200,3 +201,117 @@ def test_probe_unconfigured_is_200_and_unknown_is_422(client: TestClient):
     unknown = client.post("/api/settings/probe/unknown")
     assert unknown.status_code == 422
     assert unknown.json()["code"] == "SETTINGS_PARAMS_INVALID"
+
+
+def test_probe_rejects_non_local_origin_before_external_call(client: TestClient, monkeypatch):
+    called = False
+
+    async def fake_probe(_request):
+        nonlocal called
+        called = True
+        return "不应调用"
+
+    monkeypatch.setattr("app.settings._probe_minimax", fake_probe)
+    response = client.post(
+        "/api/settings/probe/minimax",
+        headers={"Origin": "https://example.com"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["code"] == "SETTINGS_ORIGIN_FORBIDDEN"
+    assert called is False
+
+
+def test_probe_dispatches_every_provider_without_real_network(client: TestClient, monkeypatch):
+    seen: list[str] = []
+
+    async def fake_llm(provider, _request):
+        seen.append(provider)
+        return "模型响应成功"
+
+    async def fake_tts(provider, _request):
+        seen.append(provider)
+        return "合成成功"
+
+    async def fake_minimax(_request):
+        seen.append("minimax")
+        return "MiniMax 连接成功"
+
+    monkeypatch.setattr("app.settings._probe_llm", fake_llm)
+    monkeypatch.setattr("app.settings._probe_tts", fake_tts)
+    monkeypatch.setattr("app.settings._probe_minimax", fake_minimax)
+    monkeypatch.setattr("app.settings.ffmpeg_version", lambda _path: "ffmpeg version test")
+
+    providers = [
+        "llm_deepseek",
+        "llm_qwen",
+        "llm_moonshot",
+        "tts_aliyun",
+        "tts_volc",
+        "minimax",
+        "ffmpeg",
+    ]
+    for provider in providers:
+        response = client.post(f"/api/settings/probe/{provider}")
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert response.json()["latency_ms"] >= 0
+
+    assert seen == providers[:-1]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("llm_timeout_seconds", 0),
+        ("llm_timeout_seconds", 601),
+        ("minimax_timeout_seconds", 29),
+        ("minimax_timeout_seconds", 1201),
+    ],
+)
+def test_runtime_timeout_boundaries_are_rejected(client: TestClient, field: str, value: int):
+    response = client.patch(
+        "/api/settings/runtime",
+        json={"revision": 0, field: value},
+    )
+
+    assert response.status_code == 422
+    assert client.get("/api/settings/status").json()["revision"] == 0
+
+
+def test_atomic_persist_failure_keeps_previous_snapshot(app, client: TestClient, monkeypatch):
+    store = app.state.settings_store
+    previous = store.current
+
+    def fail_replace(_source, _destination):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr("app.config.os.replace", fail_replace)
+    response = client.patch(
+        "/api/settings/providers/llm_deepseek",
+        json={"revision": 0, "model_id": "changed-model"},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "SETTINGS_PERSIST_FAILED"
+    assert store.revision == 0
+    assert store.current is previous
+    assert store.current.deepseek_model_id == "deepseek-chat"
+    assert not store.path.exists()
+
+
+def test_settings_snapshots_keep_running_values_and_expose_latest_to_queued_work(app, client: TestClient):
+    store = app.state.settings_store
+    running_snapshot = store.current
+
+    store.update_provider(
+        "minimax",
+        {"minimax_api_key": "new-key", "minimax_model_id": "music-next"},
+        expected_revision=0,
+    )
+    queued_start_snapshot = store.current
+
+    assert running_snapshot.minimax_api_key == ""
+    assert running_snapshot.minimax_model_id == "music-3.0"
+    assert queued_start_snapshot.minimax_api_key == "new-key"
+    assert queued_start_snapshot.minimax_model_id == "music-next"

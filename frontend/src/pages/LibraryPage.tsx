@@ -127,8 +127,8 @@ export default function LibraryPage() {
       ) : visibleArtifacts.length === 0 ? (
         <Card>
           <Empty description={activeTab === 'all' ? '产物库为空' : `暂无${TAB_LABELS[activeTab]}产物`}>
-            <Button type="primary" disabled={activeTab === 'mix'} onClick={() => navigate(EMPTY_ROUTES[activeTab])}>
-              {activeTab === 'mix' ? '混音功能待 T006 开放' : `去创建${activeTab === 'all' ? '产物' : TAB_LABELS[activeTab]}`}
+            <Button type="primary" onClick={() => navigate(EMPTY_ROUTES[activeTab])}>
+              {`去创建${activeTab === 'all' ? '产物' : TAB_LABELS[activeTab]}`}
             </Button>
           </Empty>
         </Card>

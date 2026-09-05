@@ -307,6 +307,7 @@ async def _probe_minimax(request: Request) -> str:
 
 @router.post("/probe/{provider}")
 async def probe(provider: str, request: Request):
+    _require_local_origin(request)
     valid = {
         "llm_deepseek", "llm_qwen", "llm_moonshot", "tts_aliyun", "tts_volc", "minimax", "ffmpeg"
     }

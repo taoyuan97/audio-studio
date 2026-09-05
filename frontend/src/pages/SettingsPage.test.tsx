@@ -3,6 +3,7 @@ import { App as AntdApp } from 'antd'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api/client'
 import SettingsPage from './SettingsPage'
 
 const mocks = vi.hoisted(() => ({ status: vi.fn(), probe: vi.fn(), reveal: vi.fn(), update: vi.fn(), clear: vi.fn(), runtime: vi.fn() }))
@@ -17,7 +18,8 @@ vi.mock('../api/settings', () => ({
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  return render(<QueryClientProvider client={queryClient}><AntdApp><SettingsPage /></AntdApp></QueryClientProvider>)
+  const result = render(<QueryClientProvider client={queryClient}><AntdApp><SettingsPage /></AntdApp></QueryClientProvider>)
+  return { ...result, queryClient }
 }
 
 describe('SettingsPage', () => {
@@ -50,6 +52,10 @@ describe('SettingsPage', () => {
       ffmpeg: { available: true, version: 'ffmpeg version 9', ffprobe_available: true },
       fake_mode: true,
     })
+    mocks.update.mockResolvedValue({ revision: 3 })
+    mocks.clear.mockResolvedValue({ revision: 3 })
+    mocks.runtime.mockResolvedValue({ revision: 3 })
+    mocks.probe.mockResolvedValue({ ok: true, latency_ms: 12, message: '连接成功' })
   })
 
   it('renders editable providers and masked credentials', async () => {
@@ -132,7 +138,8 @@ describe('SettingsPage', () => {
 
   it('clears the MiniMax browser API key', async () => {
     const user = userEvent.setup()
-    renderPage()
+    const { queryClient } = renderPage()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
     const input = await screen.findByLabelText('MiniMax Music API Key')
     const card = input.closest('.ant-card') as HTMLElement
 
@@ -142,5 +149,47 @@ describe('SettingsPage', () => {
     await user.click(within(popup).getByRole('button', { name: /^清\s*除$/ }))
 
     await waitFor(() => expect(mocks.clear).toHaveBeenCalledWith('minimax', 2))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['settings-status'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['models'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['tts-defaults'] })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['music-defaults'] })
+  })
+
+  it('keeps provider probes separate from saving configuration', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const input = await screen.findByLabelText('MiniMax Music API Key')
+    const card = input.closest('.ant-card') as HTMLElement
+
+    await user.click(within(card).getByRole('button', { name: /测试连通/ }))
+    await waitFor(() => expect(mocks.probe).toHaveBeenCalledWith('minimax'))
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('updates both runtime timeout values with the current revision', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const llmTimeout = await screen.findByLabelText('LLM 超时（秒）')
+    await user.clear(llmTimeout)
+    await user.type(llmTimeout, '45')
+    await user.click(screen.getByRole('button', { name: /保存运行参数/ }))
+
+    await waitFor(() => expect(mocks.runtime).toHaveBeenCalledWith({
+      revision: 2,
+      llm_timeout_seconds: 45,
+      minimax_timeout_seconds: 600,
+    }))
+  })
+
+  it('refreshes settings status after a revision conflict', async () => {
+    const user = userEvent.setup()
+    mocks.update.mockRejectedValueOnce(new ApiError(409, 'SETTINGS_REVISION_CONFLICT', '配置已更新'))
+    renderPage()
+    const input = await screen.findByLabelText('DeepSeek API Key')
+    const card = input.closest('.ant-card') as HTMLElement
+
+    await user.type(input, 'new-secret')
+    await user.click(within(card).getByRole('button', { name: /保存/ }))
+    await waitFor(() => expect(mocks.status).toHaveBeenCalledTimes(2))
   })
 })

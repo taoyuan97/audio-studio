@@ -136,6 +136,9 @@ function ProviderCard({
     mutationFn: () => clearProviderCredentials(id, revision),
     onSuccess: () => {
       refresh()
+      queryClient.invalidateQueries({ queryKey: ['models'] })
+      queryClient.invalidateQueries({ queryKey: ['tts-defaults'] })
+      queryClient.invalidateQueries({ queryKey: ['music-defaults'] })
       message.success(`${title} ${id === 'tts_volc' ? '浏览器认证信息已清除' : '浏览器 API Key 已清除'}`)
     },
     onError: (error) => { refresh(); message.error(errorMessage(error)) },
