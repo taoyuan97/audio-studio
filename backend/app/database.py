@@ -104,6 +104,23 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
 );
 CREATE INDEX IF NOT EXISTS idx_artifact_versions_artifact
   ON artifact_versions(artifact_id, version_no DESC);
+
+CREATE TABLE IF NOT EXISTS tts_custom_voices (
+  id                   TEXT PRIMARY KEY,
+  engine               TEXT NOT NULL,
+  model                TEXT NOT NULL,
+  voice_id             TEXT NOT NULL,
+  name                 TEXT,
+  verification_status  TEXT NOT NULL DEFAULT 'unverified',
+  last_checked_at      INTEGER,
+  last_verified_at     INTEGER,
+  last_error           TEXT,
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL,
+  UNIQUE(engine, model, voice_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tts_custom_voices_model
+  ON tts_custom_voices(engine, model, created_at DESC);
 """
 
 RUN_ACTIVE_STATUSES = ("queued", "running")
@@ -132,6 +149,10 @@ class RevisionConflictError(RuntimeError):
 
 class DuplicateVersionError(RuntimeError):
     """工作草稿与当前正式版本完全一致。"""
+
+
+class DuplicateCustomVoiceError(RuntimeError):
+    """同一引擎和模型下的音色 ID 已存在。"""
 
 
 class Repository:
@@ -245,6 +266,138 @@ class Repository:
                 (now_ms(),),
             )
             return cursor.rowcount
+
+    # ---------------- custom TTS voices ----------------
+
+    def create_tts_custom_voice(
+        self,
+        *,
+        engine: str,
+        model: str,
+        voice_id: str,
+        name: str | None,
+    ) -> dict[str, Any]:
+        custom_voice_id = new_id("cvoice")
+        timestamp = now_ms()
+        try:
+            with self.transaction() as connection:
+                connection.execute(
+                    """INSERT INTO tts_custom_voices
+                       (id, engine, model, voice_id, name, verification_status,
+                        created_at, updated_at)
+                       VALUES (?,?,?,?,?,'unverified',?,?)""",
+                    (
+                        custom_voice_id,
+                        engine,
+                        model,
+                        voice_id,
+                        name,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateCustomVoiceError("自定义音色已存在") from exc
+        return self.get_tts_custom_voice(custom_voice_id)
+
+    def get_tts_custom_voice(self, custom_voice_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM tts_custom_voices WHERE id=?", (custom_voice_id,)
+            ).fetchone()
+        if row is None:
+            raise NotFoundError("自定义音色不存在")
+        return self._tts_custom_voice_dict(row)
+
+    def find_tts_custom_voice(
+        self, engine: str, model: str, voice_id: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM tts_custom_voices
+                   WHERE engine=? AND model=? AND voice_id=?""",
+                (engine, model, voice_id),
+            ).fetchone()
+        return self._tts_custom_voice_dict(row) if row else None
+
+    def list_tts_custom_voices(
+        self, *, engine: str | None = None, model: str | None = None
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if engine is not None:
+            clauses.append("engine=?")
+            params.append(engine)
+        if model is not None:
+            clauses.append("model=?")
+            params.append(model)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT * FROM tts_custom_voices {where}
+                    ORDER BY model ASC, created_at DESC, id DESC""",
+                params,
+            ).fetchall()
+        return [self._tts_custom_voice_dict(row) for row in rows]
+
+    def rename_tts_custom_voice(
+        self, custom_voice_id: str, name: str | None
+    ) -> dict[str, Any]:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE tts_custom_voices SET name=?, updated_at=? WHERE id=?",
+                (name, now_ms(), custom_voice_id),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError("自定义音色不存在")
+        return self.get_tts_custom_voice(custom_voice_id)
+
+    def set_tts_custom_voice_verification(
+        self,
+        custom_voice_id: str,
+        *,
+        status: str,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        timestamp = now_ms()
+        verified_at = timestamp if status == "verified" else None
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """UPDATE tts_custom_voices
+                   SET verification_status=?, last_checked_at=?,
+                       last_verified_at=COALESCE(?, last_verified_at),
+                       last_error=?, updated_at=?
+                   WHERE id=?""",
+                (
+                    status,
+                    timestamp,
+                    verified_at,
+                    error,
+                    timestamp,
+                    custom_voice_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise NotFoundError("自定义音色不存在")
+        return self.get_tts_custom_voice(custom_voice_id)
+
+    def delete_tts_custom_voice(self, custom_voice_id: str) -> dict[str, Any]:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM tts_custom_voices WHERE id=?", (custom_voice_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("自定义音色不存在")
+            connection.execute(
+                "DELETE FROM tts_custom_voices WHERE id=?", (custom_voice_id,)
+            )
+        return self._tts_custom_voice_dict(row)
+
+    @staticmethod
+    def _tts_custom_voice_dict(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["display_name"] = item["name"] or item["voice_id"]
+        return item
 
     # ---------------- conversations ----------------
 

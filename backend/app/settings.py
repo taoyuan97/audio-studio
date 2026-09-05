@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Literal
-from urllib.parse import urlparse
-
 import httpx
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +14,7 @@ from .errors import ApiError, invalid
 from .ffmpeg import ffmpeg_version, find_ffprobe
 from .llm.registry import ModelRegistry
 from .music.minimax import BASE_URL as MINIMAX_BASE_URL
+from .security import require_local_origin
 from .tts.providers import TTSProviderError, make_provider
 from .tts.voices import voices_for
 
@@ -144,15 +143,6 @@ def status_payload(store: SettingsStore) -> dict:
     }
 
 
-def _require_local_origin(request: Request) -> None:
-    origin = request.headers.get("origin")
-    if not origin:
-        return
-    host = (urlparse(origin).hostname or "").lower()
-    if host not in {"localhost", "127.0.0.1", "::1"}:
-        raise ApiError("SETTINGS_ORIGIN_FORBIDDEN", "设置写入仅限本机页面", 403)
-
-
 def _sync_runtime(request: Request) -> None:
     current = _store(request).current
     # 兼容既有只读引用；业务路由和 handler 均应优先读取 SettingsStore。
@@ -183,7 +173,7 @@ def reveal_credential(
     request: Request,
     response: Response,
 ):
-    _require_local_origin(request)
+    require_local_origin(request)
     mapping = REVEAL_FIELDS.get(provider)
     if mapping is None or payload.field not in mapping:
         raise invalid("SETTINGS_PARAMS_INVALID", "该服务或凭据字段不支持浏览器查看")
@@ -199,7 +189,7 @@ def reveal_credential(
 
 @router.patch("/providers/{provider}")
 def update_provider(provider: str, payload: ProviderUpdate, request: Request):
-    _require_local_origin(request)
+    require_local_origin(request)
     raw = payload.model_dump(exclude_none=True, exclude={"revision"})
     if any(isinstance(value, str) and not value.strip() for value in raw.values()):
         raise invalid("SETTINGS_PARAMS_INVALID", "配置值不能为空；清除凭据请使用清除操作")
@@ -227,7 +217,7 @@ def update_provider(provider: str, payload: ProviderUpdate, request: Request):
 
 @router.delete("/providers/{provider}/credentials")
 def clear_credentials(provider: str, payload: RevisionRequest, request: Request):
-    _require_local_origin(request)
+    require_local_origin(request)
     try:
         _store(request).clear_credentials(provider, expected_revision=payload.revision)
     except Exception as exc:
@@ -238,7 +228,7 @@ def clear_credentials(provider: str, payload: RevisionRequest, request: Request)
 
 @router.patch("/runtime")
 def update_runtime(payload: RuntimeUpdate, request: Request):
-    _require_local_origin(request)
+    require_local_origin(request)
     values = payload.model_dump(exclude_none=True, exclude={"revision"})
     try:
         _store(request).update_runtime(values, expected_revision=payload.revision)
@@ -278,7 +268,15 @@ async def _probe_llm(provider: str, request: Request) -> str:
 async def _probe_tts(provider: str, request: Request) -> str:
     settings = _store(request).current
     engine = "aliyun" if provider == "tts_aliyun" else "volc"
-    voice = voices_for(engine)[0]["id"]
+    model = settings.aliyun_tts_model_id if engine == "aliyun" else "BV700_streaming"
+    candidates = voices_for(engine, model)
+    if not candidates and engine == "aliyun":
+        candidates = request.app.state.repository.list_tts_custom_voices(
+            engine="aliyun", model=model
+        )
+    if not candidates:
+        raise ValueError("当前模型没有可用音色，请先在音色配置中添加")
+    voice = candidates[0].get("voice_id") or candidates[0]["id"]
     result = await make_provider(settings, engine).synthesize(
         "连接测试",
         voice=voice,
@@ -307,7 +305,7 @@ async def _probe_minimax(request: Request) -> str:
 
 @router.post("/probe/{provider}")
 async def probe(provider: str, request: Request):
-    _require_local_origin(request)
+    require_local_origin(request)
     valid = {
         "llm_deepseek", "llm_qwen", "llm_moonshot", "tts_aliyun", "tts_volc", "minimax", "ffmpeg"
     }

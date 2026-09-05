@@ -1,4 +1,4 @@
-import { AudioOutlined, CloseOutlined, CustomerServiceOutlined, SendOutlined } from '@ant-design/icons'
+import { AudioOutlined, CloseOutlined, CustomerServiceOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, App, Button, Card, Empty, Input, Progress, Radio, Segmented, Select, Skeleton, Slider, Space, Tabs, Tag } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -7,11 +7,11 @@ import { getArtifact, listArtifacts } from '../api/artifacts'
 import { ApiError } from '../api/client'
 import { listConversations } from '../api/conversations'
 import { cancelRun } from '../api/runs'
-import { getTtsDefaults, submitTtsJob, voicePreviewUrl } from '../api/tts'
+import { getTtsDefaults, submitTtsJob, verifyTtsCustomVoice, voicePreviewUrl } from '../api/tts'
 import type { Artifact, AudioFormat, Scene, TtsProgressEvent } from '../api/types'
 import AudioPlayer from '../components/AudioPlayer'
 import WaveformView from '../components/WaveformView'
-import { buildScriptSourceOptions, pickVoiceId } from '../features/tts/form'
+import { buildScriptSourceOptions, pickVoiceId, pickVoiceIdForScene } from '../features/tts/form'
 import type { ScriptSourceOption } from '../features/tts/form'
 import { useRunStream } from '../lib/sse'
 import { useRunStore } from '../stores/runStore'
@@ -51,6 +51,7 @@ export default function TtsPage() {
   const selectedArtifactQuery = useQuery({ queryKey: ['artifact', artifactId], queryFn: ({ signal }) => getArtifact(artifactId!, signal), enabled: Boolean(artifactId) })
   const engines = defaultsQuery.data?.engines ?? []
   const engine = engines.find((item) => item.id === engineId)
+  const selectedVoice = engine?.voices.find((item) => item.id === voiceId)
   const preset = defaultsQuery.data?.scene_presets[scene]
   const scriptOptions = useMemo(
     () => buildScriptSourceOptions(scriptsQuery.data?.items ?? [], conversationsQuery.data?.items ?? []),
@@ -68,6 +69,12 @@ export default function TtsPage() {
   }, [defaultsQuery.data])
 
   useEffect(() => {
+    if (!engine || engine.voices.some((voice) => voice.id === voiceId)) return
+    setVoiceId(pickVoiceId(engine, preset))
+    setPreviewSrc(null)
+  }, [engine, preset, voiceId])
+
+  useEffect(() => {
     if (selectedArtifactQuery.data?.type === 'script_meditation') setScene('meditation')
   }, [selectedArtifactQuery.data])
 
@@ -76,7 +83,7 @@ export default function TtsPage() {
     const nextPreset = defaultsQuery.data?.scene_presets[next]
     if (nextPreset) {
       setSpeed(nextPreset.speed)
-      setVoiceId(pickVoiceId(engine, nextPreset))
+      setVoiceId(pickVoiceIdForScene(engine, nextPreset, voiceId))
     }
   }
 
@@ -107,6 +114,24 @@ export default function TtsPage() {
     },
   })
   const cancelMutation = useMutation({ mutationFn: () => cancelRun(runId!), onError: () => message.error('取消任务失败') })
+  const customPreviewMutation = useMutation({
+    mutationFn: (id: string) => verifyTtsCustomVoice(id),
+    onSuccess: (response) => {
+      setPreviewSrc(`${response.preview_url}?v=${response.voice.last_checked_at ?? response.voice.updated_at}`)
+      queryClient.invalidateQueries({ queryKey: ['tts-defaults'] })
+    },
+    onError: (error) => message.error(error instanceof ApiError ? error.message : '音色试听失败'),
+  })
+
+  const previewVoice = () => {
+    if (!selectedVoice) return
+    setPreviewSrc(null)
+    if (selectedVoice.source === 'custom' && selectedVoice.custom_voice_id) {
+      customPreviewMutation.mutate(selectedVoice.custom_voice_id)
+    } else {
+      setPreviewSrc(voicePreviewUrl(engineId, voiceId))
+    }
+  }
 
   useRunStream(runId, {
     'run.status': (event) => {
@@ -149,10 +174,16 @@ export default function TtsPage() {
           options={[{ label: '冥想', value: 'meditation' }, { label: '播客', value: 'podcast' }]} onChange={(value) => chooseScene(value as Scene)} /><small>{preset?.note}</small></div>
         <div className="tts-field"><label>TTS 引擎</label><Select value={engineId} onChange={chooseEngine}
           options={engines.map((item) => ({ value: item.id, label: `${item.name} · ${item.model}` }))} style={{ width: '100%' }} /></div>
-        <div className="tts-field"><label>音色</label><Space.Compact block><Select value={voiceId} onChange={(value) => { setVoiceId(value); setPreviewSrc(null) }}
-          options={(engine?.voices ?? []).map((voice) => ({ value: voice.id, label: `${preset?.recommended_voice_ids.includes(voice.id) ? '★ ' : ''}${voice.name} · ${voice.tags.join('/')}` }))}
-          style={{ width: '100%' }} /><Button icon={<AudioOutlined />} onClick={() => setPreviewSrc(voicePreviewUrl(engineId, voiceId))}>试听</Button></Space.Compact>
-          {previewSrc && <audio className="tts-preview" controls autoPlay src={previewSrc} />}</div>
+        <div className="tts-field"><label>音色</label><Space.Compact block><Select value={voiceId || undefined} onChange={(value) => { setVoiceId(value); setPreviewSrc(null) }}
+          placeholder="当前模型暂无可用音色"
+          options={[
+            { label: '系统音色', options: (engine?.voices ?? []).filter((voice) => voice.source === 'system').map((voice) => ({ value: voice.id, label: `${preset?.recommended_voice_ids.includes(voice.id) ? '★ ' : ''}${voice.name} · ${voice.tags.join('/')}` })) },
+            { label: '我的音色', options: (engine?.voices ?? []).filter((voice) => voice.source === 'custom').map((voice) => ({ value: voice.id, label: `${voice.name} · ${voice.id}` })) },
+          ].filter((group) => group.options.length > 0)}
+          style={{ width: '100%' }} /><Button icon={<AudioOutlined />} disabled={!selectedVoice} loading={customPreviewMutation.isPending} onClick={previewVoice}>试听</Button></Space.Compact>
+          {!selectedVoice && engineId === 'aliyun' && <small>当前模型暂无可用音色。<Button type="link" size="small" icon={<SettingOutlined />} onClick={() => navigate('/settings?tab=voices')}>前往音色配置</Button></small>}
+          {selectedVoice?.source === 'custom' && selectedVoice.verification_status !== 'verified' && <small>{selectedVoice.verification_status === 'failed' ? '该音色最近一次验证失败，仍可提交并由阿里云最终校验。' : '该音色尚未验证，建议先试听。'}</small>}
+          {previewSrc && <audio className="tts-preview" controls autoPlay src={previewSrc} onError={() => message.error('试听音频加载失败')} />}</div>
         <div className="tts-field"><label>语速 <b>{speed.toFixed(2)}x</b></label><Slider min={0.5} max={1.5} step={0.05} value={speed} onChange={setSpeed} /></div>
         <div className="tts-field"><label>音调 <b>{pitch === null ? '默认' : `${pitch > 0 ? '+' : ''}${pitch} 半音`}</b></label><Slider min={-12} max={12} step={1} value={pitch ?? 0}
           disabled={!engine?.supports_pitch} onChange={(value) => setPitch(value === 0 ? null : value)} />{!engine?.supports_pitch && <small>当前引擎不支持音调调节，将使用默认音调。</small>}</div>

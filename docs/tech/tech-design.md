@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.1
-- 状态：设计已确认、一期除 T008 外已实施（T001–T003、T005–T007、T009 已完成；T004 阿里云技术验收通过、火山延期；T008 待实施）
+- 版本：v2.2
+- 状态：设计已确认、T011 已完成并验收通过
 - 创建日期：2026-08-26
+- 变更记录：v2.2 增加 T011 阿里云自定义音色库：SQLite 按模型持久化、设置页独立 Tab、试听验证状态、模型感知缓存与 TTS 模型快照一致性
 - 变更记录：v2.1 完成 T006/T007 状态校准；首页移除快速开始，侧边栏增加分业务线运行态徽标，设置探测补齐本机 Origin 校验，真实 Provider 联调归入 T008
 - 变更记录：v2.0 开放 MiniMax API Key 与模型 ID 的浏览器编辑、回显和清除；BGM defaults 与任务开始时快照读取运行时模型 ID
 - 变更记录：v1.9 增加仅限浏览器运行时凭据的按字段回显；`.env`/MiniMax 禁止回显，火山 App ID 与 Token 独立展示
@@ -80,14 +81,14 @@
 | 剧本生成（A3） | 单次 LLM 调用 + 流式，**不用 LangGraph**；ModelRegistry 模式沿用（OpenAI 兼容 httpx 直连，无 LangChain 依赖） |
 | 长任务协议（A2） | TTS/BGM/混音/剧本统一 run + SSE |
 | 任务并发（C3） | 全局单任务串行队列（FIFO），队列上限 8 → 超出 409 `RUN_QUEUE_FULL` |
-| 数据模型（A4 修订） | conversations/messages/message_attachments/runs/artifacts + script_drafts + artifact_versions；会话至多一个逻辑脚本产物，AI/编辑写草稿，用户手动追加版本 |
+| 数据模型（A4 修订） | conversations/messages/message_attachments/runs/artifacts + script_drafts + artifact_versions + tts_custom_voices；会话至多一个逻辑脚本产物，AI/编辑写草稿，用户手动追加版本 |
 | 存储（B1） | 本地 `data/audio/` 音频文件（StaticFiles 托管）+ SQLite 单库；放弃 OSS |
 | TTS（B2） | 统一 `TTSProvider` 接口，阿里云 DashScope + 火山引擎双适配；阿里云真实链路已验证，火山待官方鉴权说明后验证 |
 | 情绪标记（B3/E7） | 阿里云 `qwen-audio-3.0-tts-plus` 为默认模型，`[情绪:x]` → instruction 直传（已验证支持）；火山按 `TTSCapabilities` 能力声明降级为普通朗读；不引入 sambert 旧模型分支 |
 | BGM（B4/E1） | MiniMax Music **同步接口**（`music_generation`，单次调用返回 `audio_url`，长超时 10min）：调用 → SSE 等待心跳 → 即下即存；失败不自动重试，重试区分「重新下载/重新生成」（E8） |
 | 混音（B5） | 本地 FFmpeg（Windows 安装），Python 子进程封装；闪避仅模式 B（sidechaincompress），模式 A 删除 |
 | 音频预览（B6） | `<audio>` 经 artifact API 流播放（HTTP Range）；16bit WAV 原生解析，其他格式经 ffmpeg 提取 PCM → 峰值 JSON（缓存） |
-| 音色库（D4） | 官方音色列表硬编码后端配置，支持试听（按引擎+音色缓存） |
+| 音色库（D4/T011） | 系统音色按模型维护；阿里云自定义音色由 SQLite 持久化并在设置页管理，TTS 页只合并当前模型音色；试听缓存包含模型身份 |
 | 纯音乐（D2） | 并入 BGM 模块；混音页支持仅背景轨导出 |
 | 闪避（D1） | 仅模式 B「人声时压低」，带开关；单轨组合自动失效 |
 | API Key（D3，已修订） | `.env` 提供初始值，浏览器可为 DeepSeek/千问/Kimi/阿里云 TTS/火山 TTS/MiniMax 写入本机运行时覆盖并热生效；仅运行时覆盖可按字段回显，`.env` 凭据不可回显 |
@@ -183,7 +184,7 @@ audio-studio/
 
 ### 5.2 API 契约（概览，详见 [api-contract.md](api-contract.md)）
 
-端点分组（约 24 个）：通用（health/stats）、剧本线（conversations CRUD + messages 游标分页 + models）、run 三件套（状态查询/SSE/取消）、产物（list/detail/patch/delete/audio(Range)/peaks）、TTS 线（defaults/preview/jobs）、BGM 线（defaults/jobs/retry 两档）、混音线（jobs）、设置（status/probe）。
+端点分组：通用（health/stats）、剧本线（conversations CRUD + messages 游标分页 + models）、run 三件套（状态查询/SSE/取消）、产物（list/detail/patch/delete/audio(Range)/peaks）、TTS 线（defaults/系统试听/jobs + 自定义音色 CRUD/验证/缓存播放）、BGM 线（defaults/jobs/retry 两档）、混音线（jobs）、设置（status/probe）。
 
 关键约定：错误统一 `{code, message}`（脱敏）；长任务提交 202 + 同构 run 载荷 `{run_id, kind, status, events_url}`；消息游标分页。完整请求/响应示例、参数校验、错误码总表与前端处理建议见 **api-contract.md**（实现级，契约测试与 `types.ts` 的对接唯一基准）。
 
@@ -193,9 +194,9 @@ audio-studio/
 
 ### 5.4 数据存储（概览，详见 [data-model.md](data-model.md)）
 
-SQLite 单库（WAL）：核心表 `conversations/messages/message_attachments/runs/artifacts`，剧本另有 `script_drafts` 工作草稿与 `artifact_versions` 不可变版本；消息附件正文仅供服务端 LLM 上下文使用，列表 API 只返回元数据；artifact 保存当前版本物化快照，后端 marker 解析仍是唯一事实源。
+SQLite 单库（WAL）：核心表 `conversations/messages/message_attachments/runs/artifacts`，剧本另有 `script_drafts` 工作草稿与 `artifact_versions` 不可变版本，TTS 另有 `tts_custom_voices` 按模型持久化音色库；消息附件正文仅供服务端 LLM 上下文使用，列表 API 只返回元数据；artifact 保存当前版本物化快照，后端 marker 解析仍是唯一事实源。
 
-文件：`data/audio/artifacts/{id}.mp3|.wav`（音频产物）、`data/audio/previews/{engine}_{voice}.wav`（试听缓存）、`data/audio/peaks/{id}.json`（波形峰值缓存）；`DATA_DIR` 配置，正式项目数据从零开始。
+文件：`data/audio/artifacts/{id}.mp3|.wav`（音频产物）、`data/audio/previews/{engine}_{sha256(engine\0model\0voice_id)}.wav`（模型感知试听缓存）、`data/audio/peaks/{id}.json`（波形峰值缓存）；`DATA_DIR` 配置。自定义音色元数据保存在 `audio.sqlite3/tts_custom_voices`，不写入 `settings.json`。
 
 ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定义、文件生命周期与清理规则见 **data-model.md**。
 
@@ -215,7 +216,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 ### 5.6 TTS 线设计
 
 - **`app/tts/providers.py`**：`TTSProvider` 统一接口——`synthesize(text, {voice, speed, pitch, emotion}) -> WAV bytes`；实现**移植自 meditation-guide-studio（已验证代码）**：
-  - `AliyunTTSProvider`：Qwen-TTS 只读取独立的 `ALIYUN_TTS_API_KEY` / `ALIYUN_TTS_MODEL_ID`（默认 `qwen-audio-3.0-tts-plus`），不得回退读取千问 LLM 的 `DASHSCOPE_*`；走 `/services/audio/tts/SpeechSynthesizer`，payload 含 `sample_rate/volume/rate/pitch/instruction/enable_ssml`，Bearer 鉴权，SSE 响应流式解析（逐行 `data:` → JSON event → 拼 `output.audio.data`）。不移植 sambert 旧分支（E7）。
+  - `AliyunTTSProvider`：Qwen-TTS 只读取独立的 `ALIYUN_TTS_API_KEY`，默认模型来自 `ALIYUN_TTS_MODEL_ID`，不得回退读取千问 LLM 的 `DASHSCOPE_*`；同时允许调用方显式传入模型，用于预配置音色验证和执行不可变 TTS 快照。走 `/services/audio/tts/SpeechSynthesizer`，payload 含 `sample_rate/volume/rate/pitch/instruction/enable_ssml`，Bearer 鉴权，SSE 响应流式解析（逐行 `data:` → JSON event → 拼 `output.audio.data`）。不移植 sambert 旧分支（E7）。
   - `VolcTTSProvider`：`openspeech.bytedance.com` —— HMAC 签名换 access token（带缓存与过期刷新）→ HTTP 合成（`voice_type/speed_ratio/volume_ratio`），二进制 frame 解码。
 - **`app/tts/capabilities.py`**：`TTSCapabilities` 能力声明（移植）——按 provider/model/voice 声明是否支持 instruction/SSML/pitch、SSML 最大停顿毫秒数、音色白名单；提交与合成计划构建时校验，不支持项自动降级。
 - 默认 `qwen-audio-3.0-tts-plus` 真实验证能力：`supports_instruction=true`、`supports_ssml=false`、`supports_pitch=false`。向该模型发送 `enable_ssml + <break>` 会返回 `ret=416`，因此 `[停顿 Ns]` 必须切本地静音；前端音调滑块置灰。计划层仍保留未来 SSML 模型的 break 策略。
@@ -225,8 +226,10 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
   - `[吸气]` → 4s、`[呼气]` → 5s 静音（E4）；`[情绪:x]` → 阿里云 instruction 直传、火山降级为普通朗读；`[语速:x]` → 分段 rate。
 - **分段合成与拼接**：逐段调用 Provider 取 WAV PCM → 与静音段按序拼接 → 统一 48kHz WAV 母带 → MP3（libmp3lame 320k，E2/E3）。段内超长再按句号切分。全程逐段推 `tts.progress` 并同步写 `runs.progress_json`，可中断。
 - **音频落盘工程规范（移植）**：每段先落中间 WAV → `ffprobe` 复验采样率（48k）与声道一致性 → concat manifest 拼接 `.part` 临时文件 → `os.replace` 原子替换最终文件 → 再次 probe 复验时长；任一步失败清理临时文件，不落半成品。
-- **音色库（D4）**：`app/tts/voices.py` 硬编码两引擎官方音色（阿里云音色表可参考移植该项目的 `ALIYUN_VOICES`），`GET /api/tts/defaults` 输出；场景预设（冥想：0.8x + 温柔系音色高亮；播客：1.0x + 知性系）一并下发。
-- **试听**：`GET /api/tts/voices/{engine}/{voice}/preview` 首次用固定短句真实合成落 `previews/` 缓存，其后回放缓存文件；前端 `<audio>` 直接播。
+- **系统音色库（D4）**：`app/tts/voices.py` 按模型维护系统音色；现有阿里云 `longanlingxin/longanlufeng` 只属于 `qwen-audio-3.0-tts-plus`，名称按官方修正为“龙安灵心/龙安鲁风”。火山继续使用既有白名单。场景预设只推荐当前模型实际存在的系统音色。
+- **自定义音色库（T011）**：`tts_custom_voices` 保存 `engine/model/voice_id/name` 及验证状态，`(engine,model,voice_id)` 唯一。设置页允许为任意模型逐条预配置、重命名、试听验证和删除；TTS defaults 只合并当前 `ALIYUN_TTS_MODEL_ID` 对应记录。删除仅影响本地元数据和试听缓存，不调用阿里云远端删除接口。
+- **试听与验证**：系统音色继续使用惰性试听；自定义音色通过显式 verify 操作维护 `unverified|verified|failed`、最近检查/成功时间和脱敏错误。普通试听命中缓存不调用 Provider；强制重新验证需前端费用确认。缓存键包含 engine/model/voice_id 并使用 SHA-256 文件名，`.part` 校验后原子替换，失败保留旧缓存。
+- **任务一致性**：TTS 提交时从服务端解析并冻结 `model/voice_id/voice_name/voice_source`。handler 使用提交时模型和当前凭据，禁止在出队时用最新 `ALIYUN_TTS_MODEL_ID` 覆盖快照；配置重命名或删除不改写排队任务与历史产物。
 - **来源**：`script_artifact_id`（取产物 text）或裸 `text`；来源为脚本产物时 scene 自动判定并记入 params 快照。
 
 ### 5.7 BGM 线设计
@@ -265,9 +268,10 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 - `DELETE /api/settings/providers/{provider}/credentials`：删除浏览器运行时凭据覆盖；若 `.env` 有值则立即回退并在 status 中显示 `source=env`。
 - `POST /api/settings/providers/{provider}/credentials/reveal`：以 revision + 单字段读取 `SettingsStore._overrides`，不读取合并后的 Settings，因而不会回退或泄露 `.env`；成功响应禁止缓存，并复用本机 Origin 校验。MiniMax 与其他单 Key provider 使用 `credential`，火山 App ID/Token 分字段请求，页面自动读取 App ID 不会同时下发 Token。
 - 前端完整凭据只保存在 ProviderCard 组件状态：默认隐藏，点击显示；保存成功与卸载时释放，不进入 React Query/Web Storage/URL。MiniMax 使用标准密码输入并可编辑模型 ID；火山 App ID 为普通输入常显，Access Token 使用独立密码输入。
+- 设置页顶层使用“模型与环境设置 / 音色配置”两个 Tab，交互参考产物库。前者承载既有 Provider、运行时和本地环境；后者管理 SQLite 自定义音色，并清楚标注模型绑定、试听费用和本地删除语义。TTS 页不提供音色 CRUD。
 - 写接口携带 revision 做乐观并发控制；校验并原子落盘成功后才替换内存快照。保存和真实连通测试分离，探测失败不回滚配置。
 - `POST /api/settings/probe/{provider}`：轻量真实探测——LLM（一次极短补全）、TTS（合成一句短音频即弃）、MiniMax（调用官方 `GET /v1/models`，不触发音乐生成计费）、ffmpeg（版本）。FAKE_MODE 不改变 probe 的真实探测语义。
-- 免重启生效边界：已运行任务保留启动时快照；排队中尚未执行及保存后新提交的任务在开始执行时读取最新快照。LLM registry、TTS/BGM handler 不得永久捕获启动时配置。
+- 免重启生效边界：一般任务在开始执行时读取最新设置；TTS 的模型与音色在提交时冻结、执行时仅读取最新凭据，防止排队期间切换模型造成错配。LLM registry 和 BGM handler 不得永久捕获启动时配置。
 - 安全边界为绑定 `127.0.0.1` 的本机可信用户：写接口执行同源/Origin 校验，不在本任务引入登录鉴权；若未来开放局域网或公网访问，必须先增加管理员认证。
 
 ### 5.10 环境配置
@@ -439,8 +443,9 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | T007 | 产物库 + 首页 + 设置页 | T002（各线产物陆续接入） |
 | T008 | E2E 联调与验收（FAKE_MODE 主路径 + 真实服务 smoke） | 全部 |
 | T009 | 冥想消息 Markdown/TXT 参考附件：选择校验、持久化、Prompt 与重试 | T003 |
+| T011 | 阿里云自定义音色库：按模型持久化、设置页管理、试听验证、TTS 合并选择 | T004、T007 |
 | 二期 T101+ | 播客剧本线（scene=podcast，意图识别/润色模式），复用 T004/T006 | 一期完成 |
 
 建议顺序：T001/T002 并行 → T003 → T004 → T005 → T006 → T007 → T008。B3 情绪支持度已由 meditation-guide-studio 验证，`smoke_tts.py` 仅作 T004 完工后的连通复核，不再阻塞开工。
 
-当前实施状态：T001、T002、T003、T005、T006、T007、T009 已完成；T004 阿里云技术验收通过、火山延期；T008 待开始。任务状态以各 `docs/task/T*.md` 为准。
+当前实施状态：T001、T002、T003、T005、T006、T007、T009、T011 已完成；T004 阿里云技术验收通过、火山延期；T008 待开始。任务状态以各 `docs/task/T*.md` 为准。

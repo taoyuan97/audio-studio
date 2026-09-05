@@ -6,7 +6,7 @@ import {
   SaveOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, App, Button, Card, Form, Input, InputNumber, Popconfirm, Skeleton, Space, Tag } from 'antd'
+import { Alert, App, Button, Card, Form, Input, InputNumber, Popconfirm, Skeleton, Space, Tabs, Tag } from 'antd'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -19,6 +19,7 @@ import {
 } from '../api/settings'
 import { ApiError } from '../api/client'
 import type { ProviderStatus, SettingsProviderId, SettingsStatus } from '../api/types'
+import CustomVoiceSettings from '../features/tts/CustomVoiceSettings'
 
 const PROVIDERS: Array<{ id: SettingsProviderId; title: string; kind: string; model?: boolean }> = [
   { id: 'llm_deepseek', title: 'DeepSeek', kind: 'LLM', model: true },
@@ -272,6 +273,9 @@ function RuntimeCard({ status }: { status: SettingsStatus }) {
 
 export default function SettingsPage() {
   const { message } = App.useApp()
+  const [activeTab, setActiveTab] = useState<'environment' | 'voices'>(() =>
+    new URLSearchParams(window.location.search).get('tab') === 'voices' ? 'voices' : 'environment',
+  )
   const query = useQuery({ queryKey: ['settings-status'], queryFn: ({ signal }) => getSettingsStatus(signal) })
   const ffmpegProbe = useMutation({
     mutationFn: () => probeProvider('ffmpeg'),
@@ -281,33 +285,58 @@ export default function SettingsPage() {
   if (query.isLoading) return <Skeleton active paragraph={{ rows: 10 }} />
   if (!query.data) return <Alert type="error" showIcon message="设置加载失败" action={<Button onClick={() => query.refetch()}>重试</Button>} />
   const status = query.data
+  const changeTab = (key: string) => {
+    const next = key === 'voices' ? 'voices' : 'environment'
+    setActiveTab(next)
+    const url = new URL(window.location.href)
+    if (next === 'voices') url.searchParams.set('tab', 'voices')
+    else url.searchParams.delete('tab')
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+  }
   return (
     <div className="page-stack settings-page">
-      <div className="page-head"><div><h2 className="page-title">模型与环境设置</h2><p className="page-desc">API Key 和认证信息仅保存在本机，保存后对后续开始执行的任务立即生效。</p></div><Tag>配置版本 {status.revision}</Tag></div>
+      <div className="page-head"><div><h2 className="page-title">设置</h2><p className="page-desc">管理模型、运行环境与阿里云 TTS 自定义音色。</p></div><Tag>配置版本 {status.revision}</Tag></div>
       <Alert type="warning" showIcon message="仅限本机可信用户" description="设置写入未提供登录鉴权，请保持服务绑定 127.0.0.1，不要暴露到局域网或公网。" />
       {status.fake_mode && <Alert type="info" showIcon message="当前为 FAKE_MODE" description="普通生成使用本地模拟；“测试连通”仍会请求真实第三方服务。" />}
-      <div className="settings-provider-grid">
-        {PROVIDERS.map((provider) => (
-          <ProviderCard
-            key={`${provider.id}-${status.revision}`}
-            id={provider.id}
-            title={provider.title}
-            kind={provider.kind}
-            hasModel={Boolean(provider.model)}
-            status={status.providers[provider.id]}
-            revision={status.revision}
-          />
-        ))}
-      </div>
-      <RuntimeCard key={`runtime-${status.revision}`} status={status} />
-      <Card title="本地环境">
-        <div className="settings-environment">
-          <span>FFmpeg：{status.ffmpeg.available ? '可用' : '不可用'}</span>
-          <span>ffprobe：{status.ffmpeg.ffprobe_available ? '可用' : '不可用'}</span>
-          <span className="settings-version">{status.ffmpeg.version ?? '未检测到版本'}</span>
-          <Button icon={<ExperimentOutlined />} loading={ffmpegProbe.isPending} onClick={() => ffmpegProbe.mutate()}>测试 FFmpeg</Button>
-        </div>
-      </Card>
+      <Tabs
+        activeKey={activeTab}
+        onChange={changeTab}
+        items={[
+          {
+            key: 'environment',
+            label: '模型与环境设置',
+            children: <div className="settings-tab-stack">
+              <div className="settings-provider-grid">
+                {PROVIDERS.map((provider) => (
+                  <ProviderCard
+                    key={`${provider.id}-${status.revision}`}
+                    id={provider.id}
+                    title={provider.title}
+                    kind={provider.kind}
+                    hasModel={Boolean(provider.model)}
+                    status={status.providers[provider.id]}
+                    revision={status.revision}
+                  />
+                ))}
+              </div>
+              <RuntimeCard key={`runtime-${status.revision}`} status={status} />
+              <Card title="本地环境">
+                <div className="settings-environment">
+                  <span>FFmpeg：{status.ffmpeg.available ? '可用' : '不可用'}</span>
+                  <span>ffprobe：{status.ffmpeg.ffprobe_available ? '可用' : '不可用'}</span>
+                  <span className="settings-version">{status.ffmpeg.version ?? '未检测到版本'}</span>
+                  <Button icon={<ExperimentOutlined />} loading={ffmpegProbe.isPending} onClick={() => ffmpegProbe.mutate()}>测试 FFmpeg</Button>
+                </div>
+              </Card>
+            </div>,
+          },
+          {
+            key: 'voices',
+            label: '音色配置',
+            children: <CustomVoiceSettings defaultModel={status.providers.tts_aliyun.model_id ?? 'qwen-audio-3.0-tts-plus'} />,
+          },
+        ]}
+      />
     </div>
   )
 }

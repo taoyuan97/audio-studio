@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
 import SettingsPage from './SettingsPage'
 
-const mocks = vi.hoisted(() => ({ status: vi.fn(), probe: vi.fn(), reveal: vi.fn(), update: vi.fn(), clear: vi.fn(), runtime: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  status: vi.fn(), probe: vi.fn(), reveal: vi.fn(), update: vi.fn(), clear: vi.fn(), runtime: vi.fn(),
+  listVoices: vi.fn(), createVoice: vi.fn(), renameVoice: vi.fn(), deleteVoice: vi.fn(), verifyVoice: vi.fn(),
+}))
 vi.mock('../api/settings', () => ({
   getSettingsStatus: mocks.status,
   probeProvider: mocks.probe,
@@ -14,6 +17,13 @@ vi.mock('../api/settings', () => ({
   updateProvider: mocks.update,
   clearProviderCredentials: mocks.clear,
   updateRuntime: mocks.runtime,
+}))
+vi.mock('../api/tts', () => ({
+  listTtsCustomVoices: mocks.listVoices,
+  createTtsCustomVoice: mocks.createVoice,
+  renameTtsCustomVoice: mocks.renameVoice,
+  deleteTtsCustomVoice: mocks.deleteVoice,
+  verifyTtsCustomVoice: mocks.verifyVoice,
 }))
 
 function renderPage() {
@@ -26,6 +36,7 @@ describe('SettingsPage', () => {
   afterEach(cleanup)
   beforeEach(() => {
     vi.clearAllMocks()
+    window.history.replaceState(null, '', '/settings')
     const editable = {
       configured: true,
       credential_masked: 'sk-***abcd',
@@ -56,6 +67,8 @@ describe('SettingsPage', () => {
     mocks.clear.mockResolvedValue({ revision: 3 })
     mocks.runtime.mockResolvedValue({ revision: 3 })
     mocks.probe.mockResolvedValue({ ok: true, latency_ms: 12, message: '连接成功' })
+    mocks.listVoices.mockResolvedValue({ items: [] })
+    mocks.createVoice.mockResolvedValue({ id: 'cvoice_1' })
   })
 
   it('renders editable providers and masked credentials', async () => {
@@ -191,5 +204,73 @@ describe('SettingsPage', () => {
     await user.type(input, 'new-secret')
     await user.click(within(card).getByRole('button', { name: /保存/ }))
     await waitFor(() => expect(mocks.status).toHaveBeenCalledTimes(2))
+  })
+
+  it('switches to the voice configuration tab and creates a model-bound voice', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('tab', { name: '音色配置' }))
+    expect(window.location.search).toBe('?tab=voices')
+    expect(await screen.findByText('尚未配置自定义音色')).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: /新增音色/ })[0])
+    const dialog = await screen.findByRole('dialog', { name: '新增阿里云音色' })
+    const modelInput = within(dialog).getByLabelText('模型 ID')
+    expect(modelInput).toHaveValue('qwen-audio')
+    await user.clear(modelInput)
+    await user.type(modelInput, 'qwen-audio-3.0-tts-plus')
+    await user.type(within(dialog).getByLabelText('音色 ID'), 'custom-voice-01')
+    await user.type(within(dialog).getByLabelText('音色名称（可选）'), '温柔女声')
+    await user.click(within(dialog).getByRole('button', { name: /保\s*存/ }))
+    const confirmation = (await screen.findByText('检测到可能是基础音色后缀')).closest('.ant-modal') as HTMLElement
+    await user.click(within(confirmation).getByRole('button', { name: '按原 ID 保存' }))
+
+    await waitFor(() => expect(mocks.createVoice).toHaveBeenCalled())
+    expect(mocks.createVoice.mock.calls[0][0]).toEqual({
+      model: 'qwen-audio-3.0-tts-plus',
+      voice_id: 'custom-voice-01',
+      name: '温柔女声',
+    })
+  })
+
+  it('offers to complete a plus basic voice suffix before saving', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('tab', { name: '音色配置' }))
+    await user.click(screen.getAllByRole('button', { name: /新增音色/ })[0])
+    const dialog = await screen.findByRole('dialog', { name: '新增阿里云音色' })
+    await user.clear(within(dialog).getByLabelText('模型 ID'))
+    await user.type(within(dialog).getByLabelText('模型 ID'), 'qwen-audio-3.0-tts-plus')
+    await user.type(within(dialog).getByLabelText('音色 ID'), 'longlinshuoxi')
+    await user.click(within(dialog).getByRole('button', { name: /保\s*存/ }))
+
+    const confirmation = (await screen.findByText('检测到可能是基础音色后缀')).closest('.ant-modal') as HTMLElement
+    expect(within(confirmation).getByText('qwen-audio-3.0-tts-plus-longlinshuoxi')).toBeInTheDocument()
+    expect(mocks.createVoice).not.toHaveBeenCalled()
+    await user.click(within(confirmation).getByRole('button', { name: '补全并保存' }))
+
+    await waitFor(() => expect(mocks.createVoice).toHaveBeenCalled())
+    expect(mocks.createVoice.mock.calls[0][0]).toEqual({
+      model: 'qwen-audio-3.0-tts-plus',
+      voice_id: 'qwen-audio-3.0-tts-plus-longlinshuoxi',
+      name: null,
+    })
+  })
+
+  it('allows a suspected suffix to be saved unchanged for cloned voices', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('tab', { name: '音色配置' }))
+    await user.click(screen.getAllByRole('button', { name: /新增音色/ })[0])
+    const dialog = await screen.findByRole('dialog', { name: '新增阿里云音色' })
+    await user.clear(within(dialog).getByLabelText('模型 ID'))
+    await user.type(within(dialog).getByLabelText('模型 ID'), 'qwen-audio-3.0-tts-plus')
+    await user.type(within(dialog).getByLabelText('音色 ID'), 'special-cloned-voice')
+    await user.click(within(dialog).getByRole('button', { name: /保\s*存/ }))
+    const confirmation = (await screen.findByText('检测到可能是基础音色后缀')).closest('.ant-modal') as HTMLElement
+    await user.click(within(confirmation).getByRole('button', { name: '按原 ID 保存' }))
+
+    await waitFor(() => expect(mocks.createVoice).toHaveBeenCalled())
+    expect(mocks.createVoice.mock.calls[0][0].voice_id).toBe('special-cloned-voice')
   })
 })

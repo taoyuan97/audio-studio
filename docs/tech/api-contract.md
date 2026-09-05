@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.1
+- 版本：v2.2
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v2.2 增加 T011 阿里云自定义音色库 CRUD、按模型合并 defaults、试听验证状态与模型感知缓存；TTS 任务冻结提交时模型快照
 - 变更记录：v2.1 校准 T006/T007 实施状态，并明确所有设置 POST/PATCH/DELETE（含 Provider probe）执行本机 Origin 校验
 - 变更记录：v2.0 开放 MiniMax API Key 与模型 ID 的浏览器写入；运行时 Key 支持按需回显和清除，`.env` Key 仍禁止回显
 - 变更记录：v1.9 增加 T007 浏览器运行时凭据按字段回显；`.env`/MiniMax 禁止回显，火山 App ID 与 Access Token 独立处理
@@ -28,7 +29,7 @@
 | 第 4 节 | 冥想会话、消息、参考附件、模型、草稿与版本保存 | 已实现 | T003/T009 |
 | 第 5 节 | run 查询、SSE、取消 | 已实现 | T002 |
 | 第 6 节 | artifacts 基座、音频/peaks、脚本版本查看与恢复 | 已实现（T002 基座 + T003 扩展） | T002/T003 |
-| 第 7 节 | TTS | 已实现；阿里云技术验收通过，火山延期 | T004 |
+| 第 7 节 | TTS | 已实现；阿里云自定义音色库已接入，火山真实联调延期 | T004/T011 |
 | 第 8 节 | BGM | 已实现；真实 MiniMax smoke 因 Key/账号权限阻塞 | T005 |
 | 第 9 节 | 混音 | 已实现 | T006 |
 | 第 10 节 | 设置状态、浏览器编辑与探测 | 已实现 | T007 |
@@ -374,7 +375,7 @@ SSE 事件流（协议见第 11 节）。
 
 ### 7.1 GET /api/tts/defaults
 
-引擎/音色库/能力声明/场景预设（后端硬编码官方列表，D4）。
+引擎/当前模型音色库/能力声明/场景预设。系统音色由后端按模型维护，自定义音色来自 SQLite；阿里云只返回与当前 `ALIYUN_TTS_MODEL_ID` 精确匹配的两类音色。
 
 - 响应 200：
 
@@ -390,7 +391,8 @@ SSE 事件流（协议见第 11 节）。
       "max_ssml_pause_ms": 0,
       "supports_pitch": false,
       "voices": [
-        { "id": "longanlingxin", "name": "龙安聆心", "tags": ["温柔", "女声"], "recommended_scene": "meditation" }
+        { "id": "longanlingxin", "name": "龙安灵心", "tags": ["温柔", "女声"], "recommended_scene": "meditation", "source": "system", "custom_voice_id": null, "verification_status": null },
+        { "id": "qwen-audio-3.0-tts-plus-myvoice-a1b2c3", "name": "温柔女声 03", "tags": ["自定义"], "recommended_scene": null, "source": "custom", "custom_voice_id": "cvoice_...", "verification_status": "verified" }
       ]
     },
     {
@@ -402,7 +404,7 @@ SSE 事件流（协议见第 11 节）。
       "max_ssml_pause_ms": 0,
       "supports_pitch": false,
       "voices": [
-        { "id": "zh_female_wanwanxiaohe_moon_bigtts", "name": "湾湾小何", "tags": ["知性", "女声"], "recommended_scene": "podcast" }
+        { "id": "zh_female_wanwanxiaohe_moon_bigtts", "name": "湾湾小何", "tags": ["知性", "女声"], "recommended_scene": "podcast", "source": "system", "custom_voice_id": null, "verification_status": null }
       ]
     }
   ],
@@ -414,17 +416,94 @@ SSE 事件流（协议见第 11 节）。
 ```
 
 - 阿里云引擎的 `model` 来自 `ALIYUN_TTS_MODEL_ID`（默认 `qwen-audio-3.0-tts-plus`）；Provider 只读取 `ALIYUN_TTS_*`，不回退读取千问 LLM 的 `DASHSCOPE_*`。
+- `source=system|custom` 标识音色来源；只有自定义音色返回 `custom_voice_id` 和 `verification_status`。自定义名称为空时 `name` 回退为完整 `voice_id`。
+- 项目内置阿里云系统音色按模型组织；现有 `longanlingxin` / `longanlufeng` 仅属于 `qwen-audio-3.0-tts-plus`。其他模型不会错误继承这两项。
+- 自定义音色不参与场景推荐。TTS 页选中自定义音色后切换场景只更新语速，不覆盖音色。
 - 默认 `qwen-audio-3.0-tts-plus` 经真实调用确认不接受 SSML `<break>`（服务端 `ret=416`）且 pitch 未验证支持，因此 defaults 声明两者为 false；停顿切本地静音，前端音调滑块置灰。instruction 已真实验证可用。
 - 能力字段即 `TTSCapabilities`（B3 降级依据）：前端可据此展示"该引擎不支持情绪指令/音调"提示。
 
 ### 7.2 GET /api/tts/voices/{engine}/{voice}/preview
 
-音色试听。首次真实合成固定短句并缓存（`previews/{engine}_{voice}.wav`），其后直接回放。
+系统音色试听。首次真实合成固定短句并缓存，其后直接回放。缓存身份包含 `engine + model + voice_id`，物理文件名使用摘要，不直接拼接 URL 参数。
 
 - 响应 200：`audio/wav`（同 6.5 支持 Range）。
 - 404：`TTS_VOICE_NOT_FOUND`；502：`TTS_PROVIDER_ERROR`（首次合成失败）。
 
-### 7.3 POST /api/tts/jobs
+### 7.3 GET /api/tts/custom-voices?model=
+
+读取 SQLite 中的阿里云自定义音色；`model` 可选，传入时精确过滤。默认返回全部记录，按模型、创建时间稳定排序。
+
+```json
+{
+  "items": [
+    {
+      "id": "cvoice_1724660000_abc123",
+      "engine": "aliyun",
+      "model": "qwen-audio-3.0-tts-plus",
+      "voice_id": "qwen-audio-3.0-tts-plus-myvoice-a1b2c3",
+      "name": "温柔女声 03",
+      "display_name": "温柔女声 03",
+      "verification_status": "verified",
+      "last_checked_at": 1724660000000,
+      "last_verified_at": 1724660000000,
+      "last_error": null,
+      "created_at": 1724660000000,
+      "updated_at": 1724660000000
+    }
+  ]
+}
+```
+
+`verification_status ∈ {unverified, verified, failed}`。名称为 `null` 时 `display_name` 返回实际 `voice_id`。验证状态仅表示最近一次真实试听结果，不是永久有效性承诺。
+
+### 7.4 POST /api/tts/custom-voices
+
+登记已有阿里云音色；保存本身不调用 Provider、不产生试听费用。
+
+```json
+{
+  "model": "qwen-audio-3.0-tts-plus",
+  "voice_id": "qwen-audio-3.0-tts-plus-myvoice-a1b2c3",
+  "name": "温柔女声 03"
+}
+```
+
+- `model` / `voice_id`：去除首尾空白后 1–200 字符，只允许 ASCII 字母、数字、点、下划线、连字符，首字符须为字母或数字。
+- Qwen-Audio 3.0 基础音色的 `voice_id` 必须是完整 voice 参数，格式为 `qwen-audio-3.0-tts-{plus|flash}-{音色后缀}`；设置页对疑似裸后缀给出补全候选，但允许用户保留原值以兼容声音复刻音色。
+- `name`：可省略或为 `null`，非空时去除首尾空白且不超过 100 字符；纯空白归一为 `null`，拒绝 NUL/控制字符。
+- 同一模型下 `(engine, model, voice_id)` 唯一；不同模型允许相同 `voice_id`。
+- 与同模型的项目内置系统音色冲突时拒绝；本接口不负责抓取完整阿里云官方列表。
+- 响应 201：完整 `TtsCustomVoice`，初始 `verification_status=unverified`。
+
+### 7.5 PATCH /api/tts/custom-voices/{id}
+
+仅重命名本地记录。请求只接受 `{ "name": "新名称" }` 或 `{ "name": null }`；`model`、`voice_id`、状态均不可修改。响应 200 为更新后的完整资源。
+
+### 7.6 DELETE /api/tts/custom-voices/{id}
+
+删除本地记录及对应试听缓存，不调用阿里云删除接口，不删除历史 run、artifact 或正式音频。响应 200：`{ "deleted": true }`。
+
+### 7.7 POST /api/tts/custom-voices/{id}/verify
+
+使用记录绑定的模型和音色 ID 合成固定短句，更新验证状态并准备试听缓存。
+
+```json
+{ "force": false }
+```
+
+- `force=false` 且已有缓存：不请求 Provider，返回 `cache_hit=true`。
+- 无缓存：请求一次 Provider；成功后原子写入 WAV 缓存并标记 verified。
+- `force=true`：忽略缓存重新验证，可能再次产生费用；前端必须二次确认。
+- 验证失败：记录 failed、检查时间和脱敏错误；保留记录以及过去成功生成的旧缓存，API 返回 502。
+- 阿里云返回 cosyvoice `Engine error [411]` 时，错误信息明确包含实际 model/voice，并提示检查完整基础音色参数；HTTP 状态仍为 502，表示失败来自上游验证调用。
+- 成功响应：`{ "voice": TtsCustomVoice, "preview_url": "/api/tts/custom-voices/{id}/preview", "cache_hit": false }`。
+- 写操作和可能计费的验证调用执行与设置接口相同的本机 Origin 校验。
+
+### 7.8 GET /api/tts/custom-voices/{id}/preview
+
+只播放已经存在的自定义音色 WAV 缓存，不调用 Provider、不产生费用；支持 HTTP Range。无缓存返回 `TTS_CUSTOM_VOICE_PREVIEW_NOT_FOUND`。
+
+### 7.9 POST /api/tts/jobs
 
 提交合成任务。
 
@@ -444,7 +523,8 @@ SSE 事件流（协议见第 11 节）。
 ```
 
 - `script_artifact_id` 与 `text` 二选一（前者优先）；来源为脚本产物时 scene 以产物来源会话自动判定（显式传入则校验一致）。
-- 校验：`engine`/`voice_id` 在 defaults 列表内；`speed` 0.5–1.5；`pitch` 引擎支持时 -12~12（半音）；`format` ∈ {mp3, wav}；裸文本 ≤20000 字符。
+- 校验：`engine`/`voice_id` 在当前 defaults 列表内；阿里云自定义音色必须已登记且绑定当前 `ALIYUN_TTS_MODEL_ID`，无论验证状态如何均可提交；`speed` 0.5–1.5；`pitch` 引擎支持时 -12~12（半音）；`format` ∈ {mp3, wav}；裸文本 ≤20000 字符。
+- 服务端解析并冻结 `model`、`voice_id`、`voice_name`、`voice_source`。TTS handler 使用提交时模型快照；排队期间修改全局模型不会静默改写任务。API Key 等凭据仍在执行时读取当前设置。
 - 响应 202：run 载荷（`kind: "tts"`）。
 - 422：`TTS_TEXT_EMPTY` / `TTS_TEXT_TOO_LONG` / `TTS_PARAMS_INVALID`；409：`RUN_QUEUE_FULL` / `TTS_RUN_ACTIVE`（同参数任务运行中）。
 
@@ -530,6 +610,8 @@ SSE 事件流（协议见第 11 节）。
 
 ## 10. 设置线
 
+设置页前端使用两个顶层 Tab：“模型与环境设置”承载既有 Provider/运行时/本地环境内容，“音色配置”承载第 7.3–7.8 节自定义音色管理。音色配置保存在 SQLite，不写入 `settings.json`；两个浏览器连接同一后端和同一 `DATA_DIR` 时共享数据。
+
 ### 10.1 GET /api/settings/status
 
 读取脱敏配置状态、可编辑参数与只读环境状态。本端点不返回完整凭据。
@@ -614,7 +696,7 @@ SSE 事件流（协议见第 11 节）。
 - 未配置 → `{ "ok": false, "latency_ms": 0, "message": "未配置 API Key" }`（仍 200）。
 - 保存与探测相互独立；探测失败不回滚配置。即使 `FAKE_MODE=true`，probe 仍是明确的真实第三方服务调用。
 - 与其他设置 POST/PATCH/DELETE 一致，probe 执行本机 Origin 校验；非本机页面请求返回 403 `SETTINGS_ORIGIN_FORBIDDEN`，且不得发起第三方调用。
-- 热生效语义：已运行任务使用开始执行时取得的配置快照；排队未执行任务及保存后新任务在开始执行时读取最新配置。
+- 热生效语义：通常由任务在开始执行时读取最新配置；TTS 是模型/音色绑定的例外——模型与音色在提交时冻结，执行时只读取最新凭据，避免排队期间切换模型导致错配。
 
 ## 11. SSE 事件协议
 
@@ -675,6 +757,13 @@ SSE 事件流（协议见第 11 节）。
 | `TTS_TEXT_EMPTY` / `TTS_TEXT_TOO_LONG` | 422 | 文本校验 | 表单校验提示 |
 | `TTS_PARAMS_INVALID` | 422 | 引擎/音色/语速/格式非法 | 表单校验提示 |
 | `TTS_VOICE_NOT_FOUND` | 404 | 音色不存在 | 刷新 defaults |
+| `TTS_CUSTOM_VOICE_PARAMS_INVALID` | 422 | 自定义音色模型、ID、名称非法或尝试修改不可编辑字段 | 保留表单并定位字段 |
+| `TTS_CUSTOM_VOICE_NOT_FOUND` | 404 | 自定义音色记录不存在 | 刷新音色配置列表/defaults |
+| `TTS_CUSTOM_VOICE_DUPLICATE` | 409 | 同模型相同自定义音色已存在 | 提示编辑已有音色 |
+| `TTS_CUSTOM_VOICE_SYSTEM_CONFLICT` | 409 | 与同模型项目内置系统音色冲突 | 直接使用系统音色 |
+| `TTS_CUSTOM_VOICE_PREVIEW_NOT_FOUND` | 404 | 自定义音色尚无试听缓存 | 先执行试听验证 |
+| `TTS_CUSTOM_VOICE_VERIFY_FAILED` | 502 | 真实试听验证失败且状态已记录 | 显示脱敏原因并允许重试 |
+| `TTS_CUSTOM_VOICE_DELETE_FAILED` | 500 | 自定义音色试听缓存无法删除 | 检查 DATA_DIR 权限后重试 |
 | `TTS_RUN_ACTIVE` | 409 | 同参数任务运行中 | 展示运行中 |
 | `TTS_PROVIDER_ERROR` | 502 | 引擎调用失败（脱敏） | 失败卡片+重试 |
 | `MUSIC_PARAMS_INVALID` | 422 | BGM 参数非法 | 表单校验提示 |

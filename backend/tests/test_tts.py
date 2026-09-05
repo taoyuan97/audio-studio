@@ -85,6 +85,43 @@ def test_aliyun_sse_parser_joins_audio_chunks():
     assert asyncio.run(run()) == b"abcdef"
 
 
+def test_aliyun_sse_parser_explains_model_voice_411():
+    async def run():
+        response = httpx.Response(
+            200,
+            content=(
+                'data: {"code":"InvalidParameter","message":'
+                '"[cosyvoice:]Engine error [411]: TTS speak operation failed"}\n\n'
+            ),
+        )
+        return await AliyunTTSProvider._parse_sse(
+            response,
+            model="qwen-audio-3.0-tts-plus",
+            voice="longlinshuoxi",
+        )
+
+    with pytest.raises(TTSProviderError) as caught:
+        asyncio.run(run())
+
+    message = str(caught.value)
+    assert "当前模型不支持该音色" in message
+    assert "model=qwen-audio-3.0-tts-plus" in message
+    assert "voice=longlinshuoxi" in message
+    assert "qwen-audio-3.0-tts-plus-音色后缀" in message
+
+
+def test_aliyun_sse_parser_keeps_other_safe_provider_errors():
+    async def run():
+        response = httpx.Response(
+            200,
+            content='data: {"code":"InvalidParameter","message":"text is invalid"}\n\n',
+        )
+        return await AliyunTTSProvider._parse_sse(response)
+
+    with pytest.raises(TTSProviderError, match="text is invalid"):
+        asyncio.run(run())
+
+
 def test_defaults_use_independent_aliyun_model(client):
     response = client.get("/api/tts/defaults")
     assert response.status_code == 200
@@ -94,17 +131,174 @@ def test_defaults_use_independent_aliyun_model(client):
     assert aliyun["supports_instruction"] is True
     assert aliyun["supports_pitch"] is False
     assert aliyun["voices"]
+    assert aliyun["voices"][0]["name"] == "龙安灵心"
+    assert aliyun["voices"][0]["source"] == "system"
 
 
 def test_preview_is_cached(client, app):
     url = "/api/tts/voices/aliyun/longanlingxin/preview"
     first = client.get(url)
     assert first.status_code == 200
-    cache = app.state.audio_dir / "previews" / "aliyun_longanlingxin.wav"
+    caches = list((app.state.audio_dir / "previews").glob("aliyun_*.wav"))
+    assert len(caches) == 1
+    cache = caches[0]
+    assert "longanlingxin" not in cache.name
     modified = cache.stat().st_mtime_ns
     second = client.get(url)
     assert second.status_code == 200
     assert cache.stat().st_mtime_ns == modified
+
+
+def test_custom_voice_crud_model_filter_and_defaults(client, app):
+    created = client.post(
+        "/api/tts/custom-voices",
+        json={"model": "qwen-audio-3.0-tts-plus", "voice_id": "my-voice_01", "name": " 我的音色 "},
+    )
+    assert created.status_code == 201
+    voice = created.json()
+    assert voice["name"] == "我的音色"
+    assert voice["display_name"] == "我的音色"
+    assert voice["verification_status"] == "unverified"
+
+    assert client.post(
+        "/api/tts/custom-voices",
+        json={"model": "other-model", "voice_id": "my-voice_01"},
+    ).status_code == 201
+    filtered = client.get(
+        "/api/tts/custom-voices", params={"model": "qwen-audio-3.0-tts-plus"}
+    ).json()["items"]
+    assert [item["id"] for item in filtered] == [voice["id"]]
+
+    aliyun = client.get("/api/tts/defaults").json()["engines"][0]
+    option = next(item for item in aliyun["voices"] if item["id"] == "my-voice_01")
+    assert option["name"] == "我的音色"
+    assert option["source"] == "custom"
+    assert option["custom_voice_id"] == voice["id"]
+
+    renamed = client.patch(
+        f"/api/tts/custom-voices/{voice['id']}", json={"name": None}
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["display_name"] == "my-voice_01"
+
+    assert client.delete(f"/api/tts/custom-voices/{voice['id']}").json() == {
+        "deleted": True
+    }
+    assert client.get(f"/api/tts/custom-voices/{voice['id']}/preview").status_code == 404
+
+
+def test_custom_voice_rejects_duplicates_system_conflicts_and_invalid_ids(client):
+    payload = {"model": "qwen-audio-3.0-tts-plus", "voice_id": "custom-one"}
+    assert client.post("/api/tts/custom-voices", json=payload).status_code == 201
+    duplicate = client.post("/api/tts/custom-voices", json=payload)
+    assert duplicate.status_code == 409
+    assert duplicate.json()["code"] == "TTS_CUSTOM_VOICE_DUPLICATE"
+
+    conflict = client.post(
+        "/api/tts/custom-voices",
+        json={"model": "qwen-audio-3.0-tts-plus", "voice_id": "longanlingxin"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "TTS_CUSTOM_VOICE_SYSTEM_CONFLICT"
+
+    invalid_id = client.post(
+        "/api/tts/custom-voices",
+        json={"model": "qwen-audio-3.0-tts-plus", "voice_id": "../escape"},
+    )
+    assert invalid_id.status_code == 422
+    assert invalid_id.json()["code"] == "TTS_CUSTOM_VOICE_PARAMS_INVALID"
+
+
+def test_custom_voice_verify_caches_force_refreshes_and_records_failure(
+    client, app, monkeypatch
+):
+    from app.tts import routes
+
+    created = client.post(
+        "/api/tts/custom-voices",
+        json={"model": "qwen-audio-3.0-tts-plus", "voice_id": "preview-custom"},
+    ).json()
+    original = routes._synthesize_one
+    calls = 0
+
+    async def count_synthesize(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(routes, "_synthesize_one", count_synthesize)
+    first = client.post(
+        f"/api/tts/custom-voices/{created['id']}/verify", json={"force": False}
+    )
+    assert first.status_code == 200
+    assert first.json()["cache_hit"] is False
+    assert first.json()["voice"]["verification_status"] == "verified"
+    cache = next((app.state.audio_dir / "previews").glob("aliyun_*.wav"))
+    assert "preview-custom" not in cache.name
+
+    second = client.post(
+        f"/api/tts/custom-voices/{created['id']}/verify", json={"force": False}
+    )
+    assert second.json()["cache_hit"] is True
+    assert calls == 1
+    assert client.get(second.json()["preview_url"]).status_code == 200
+
+    forced = client.post(
+        f"/api/tts/custom-voices/{created['id']}/verify", json={"force": True}
+    )
+    assert forced.status_code == 200
+    assert calls == 2
+
+    async def fail(*args, **kwargs):
+        raise TTSProviderError("上游拒绝该音色")
+
+    monkeypatch.setattr(routes, "_synthesize_one", fail)
+    failed = client.post(
+        f"/api/tts/custom-voices/{created['id']}/verify", json={"force": True}
+    )
+    assert failed.status_code == 502
+    assert failed.json()["code"] == "TTS_CUSTOM_VOICE_VERIFY_FAILED"
+    stored = client.get("/api/tts/custom-voices").json()["items"][0]
+    assert stored["verification_status"] == "failed"
+    assert stored["last_verified_at"] is not None
+    assert "上游拒绝" in stored["last_error"]
+    assert client.get(f"/api/tts/custom-voices/{created['id']}/preview").status_code == 200
+
+
+def test_custom_voice_can_generate_and_freezes_display_metadata(client):
+    voice = client.post(
+        "/api/tts/custom-voices",
+        json={"model": "qwen-audio-3.0-tts-plus", "voice_id": "generate-custom", "name": "温柔女声 03"},
+    ).json()
+    response = client.post(
+        "/api/tts/jobs",
+        json={
+            "text": "现在，请慢慢放松。",
+            "scene": "meditation",
+            "engine": "aliyun",
+            "voice_id": "generate-custom",
+            "speed": 0.8,
+            "format": "wav",
+        },
+    )
+    assert response.status_code == 202
+    run_id = response.json()["run_id"]
+    for _ in range(100):
+        run = client.get(f"/api/runs/{run_id}").json()
+        if run["status"] in ("completed", "failed"):
+            break
+        time.sleep(0.02)
+    assert run["status"] == "completed", run
+    artifact = client.get(f"/api/artifacts/{run['artifact_id']}").json()
+    assert artifact["params"]["voice_id"] == "generate-custom"
+    assert artifact["params"]["voice_name"] == "温柔女声 03"
+    assert artifact["params"]["voice_source"] == "custom"
+
+    assert client.patch(
+        f"/api/tts/custom-voices/{voice['id']}", json={"name": "新名称"}
+    ).status_code == 200
+    unchanged = client.get(f"/api/artifacts/{run['artifact_id']}").json()
+    assert unchanged["params"]["voice_name"] == "温柔女声 03"
 
 
 def test_fake_tts_job_creates_voice_artifact(client, app):

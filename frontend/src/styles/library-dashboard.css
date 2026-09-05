@@ -273,6 +273,53 @@
   font-size: 12px;
 }
 
+.settings-tab-stack,
+.settings-voice-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-voice-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-voice-toolbar > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.settings-voice-toolbar span,
+.settings-voice-error {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.settings-voice-error {
+  display: block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-voice-preview {
+  width: 100%;
+}
+
+.settings-voice-suggestion {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d8c7ff;
+}
+
 @media (max-width: 1000px) {
   .library-grid,
   .dashboard-module-grid,
@@ -292,6 +339,11 @@
   .settings-runtime-grid,
   .dashboard-stats {
     grid-template-columns: 1fr;
+  }
+
+  .settings-voice-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
 }

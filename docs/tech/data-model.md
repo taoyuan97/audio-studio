@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.5
+- 版本：v1.6
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v1.6 增加 T011 `tts_custom_voices` 按模型持久化音色库、试听验证状态、模型感知缓存与删除生命周期
 - 变更记录：v1.5 明确仅 `settings.json` 中的浏览器凭据覆盖可按字段回显，`.env` 基线永不回显
 - 变更记录：v1.4 增加 T007 `DATA_DIR/settings.json` 运行时配置覆盖的布局、优先级与敏感数据规则
 - 变更记录：v1.3 增加 T009 `message_attachments` 文本参考附件表及生命周期
@@ -31,6 +32,7 @@ conversations 1 ──── 0..1 artifacts(type=script_*)[逻辑脚本产物，
 artifacts    1 ──── N artifact_versions            [用户手动保存的不可变版本]
 runs         N ──── 0..1 artifacts                [script run 的 artifact_id 为 null]
 artifacts    0..N ─→ 引用 artifacts                [mix.params 引用 voice/bgm id，弱引用不约束删除]
+tts_custom_voices  独立配置资源                    [按 engine+model+voice_id 唯一；产物只保存快照，不建外键]
 ```
 
 ## 4. 表结构
@@ -187,6 +189,37 @@ CREATE TABLE artifact_versions (
 
 版本只在用户手动保存时追加；artifact 的 content/params/duration 是当前版本物化快照，供既有产物库与 TTS 接口兼容读取。现有脚本 artifact 初始化时幂等迁移为 v1。
 
+### 4.8 tts_custom_voices（自定义 TTS 音色库）
+
+```sql
+CREATE TABLE tts_custom_voices (
+  id                   TEXT PRIMARY KEY,
+  engine               TEXT NOT NULL,
+  model                TEXT NOT NULL,
+  voice_id             TEXT NOT NULL,
+  name                 TEXT,
+  verification_status  TEXT NOT NULL DEFAULT 'unverified',
+  last_checked_at      INTEGER,
+  last_verified_at     INTEGER,
+  last_error           TEXT,
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL,
+  UNIQUE(engine, model, voice_id)
+);
+CREATE INDEX idx_tts_custom_voices_model
+  ON tts_custom_voices(engine, model, created_at DESC);
+```
+
+- `id` 格式为 `cvoice_{unix毫秒}_{6位随机}`；API 使用内部 ID 做重命名、删除和验证，避免把 Provider 音色 ID 用作资源路径身份。
+- `engine` 本期只允许 `aliyun`；字段保留是为了使模型绑定和唯一约束完整。
+- `model` / `voice_id` 是创建后不可变的 Provider 身份；同一模型下 ID 唯一，不同模型可使用相同 ID。
+- `name` 是可空显示名称；为空时 API 和界面回退显示完整 `voice_id`，名称本身无需唯一。
+- `verification_status ∈ {unverified, verified, failed}`，表示最近一次真实试听验证结果而非永久有效性。
+- `last_checked_at` 记录最近一次真实验证尝试；`last_verified_at` 记录最近一次成功时间。后续失败不会抹去过去成功时间。
+- `last_error` 只保存经过脱敏和长度限制的 Provider 错误；成功后清空。
+- 自定义音色与 run/artifact 不建外键。提交时把模型、ID、名称、来源复制进不可变请求快照，因此删除或重命名配置不会改写历史。
+- 通过 `CREATE TABLE IF NOT EXISTS` 幂等升级旧 SQLite，不迁移或改写现有数据。
+
 ## 5. artifacts 多态 schema（params_json / content_json 完整定义）
 
 ### 5.1 type = script_meditation（冥想脚本）
@@ -228,7 +261,8 @@ CREATE TABLE artifact_versions (
   "engine": "aliyun",                     // 'aliyun' | 'volc'
   "model": "qwen-audio-3.0-tts-plus",     // 引擎内模型
   "voice_id": "longanlingxin",
-  "voice_name": "龙安聆心",
+  "voice_name": "龙安灵心",
+  "voice_source": "system",              // 'system' | 'custom'，提交时快照
   "speed": 0.8,                           // 0.5–1.5
   "pitch": null,                          // 引擎支持时 -12~12（半音），否则 null
   "script_artifact_id": "art_...",        // 来源脚本产物；裸文本提交时 null
@@ -296,7 +330,7 @@ data/
 ├─ audio.sqlite3
 └─ audio/
    ├─ artifacts/{artifact_id}.mp3|.wav    # 音频产物（voice/bgm/mix）
-   ├─ previews/{engine}_{voice_id}.wav    # 音色试听缓存（固定短句，一次合成永久回放）
+   ├─ previews/{engine}_{sha256(engine\0model\0voice_id)}.wav # 模型感知的音色试听缓存
    └─ peaks/{artifact_id}.json            # 波形峰值缓存（{peaks:[...], duration, buckets}）
 ```
 
@@ -306,7 +340,8 @@ data/
 |---|---|
 | `DELETE /api/artifacts/{id}` | 级联删除脚本历史版本；音频另删 `artifacts/{id}.*` + `peaks/{id}.json`；mix.params 中弱引用保留 |
 | 会话删除（本期无此入口） | messages 级联；脚本产物 `conversation_id` 置 NULL（产物保留在库） |
-| 音色试听缓存 | 永久保留（免计费回放）；仅手动清 DATA_DIR 时移除 |
+| 系统音色试听缓存 | 模型感知缓存，普通试听永久复用；仅手动清 DATA_DIR 时移除 |
+| 自定义音色试听缓存 | 普通试听复用；强制重新验证原子替换；删除本地自定义音色记录时同步移除，不影响正式音频 |
 | 峰值缓存 | 与产物同生命周期；产物 PATCH 脚本编辑（无音频）不影响 |
 | 失败/取消 run | 中间临时文件即删（`.part`/中间段 WAV 不落 DATA_DIR/audio/artifacts 命名空间） |
 | 服务重启 | queued/running run 启动时标记 failed（`code: RUN_INTERRUPTED`，文案"服务重启中断，请重新提交"），已完成产物不受影响 |
@@ -316,3 +351,5 @@ data/
 - 全局单写者：run worker 单协程串行执行（C3），SQLite 写冲突主要来自 API 请求（创建/编辑）与 worker 终态写入——统一经数据库访问层的写队列（同一线程池串行化）。
 - WAL 模式：读不阻塞写。
 - 音频文件原子落盘：`.part` 临时文件 → `os.replace`（移植规范）；数据库记录在文件落盘成功后写入，保证 `audio_path` 指向的文件必存在。
+- 自定义音色真实验证先写/校验 `.part` 再替换缓存，随后更新验证状态；失败保留旧缓存并记录脱敏失败状态。
+- TTS run 在提交时冻结 `model/voice_id/voice_name/voice_source`。执行阶段读取当前凭据，但不得用最新全局模型覆盖任务模型快照。

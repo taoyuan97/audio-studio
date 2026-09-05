@@ -91,7 +91,9 @@ class AliyunTTSProvider:
                     json={"model": self.model, "input": input_payload},
                 ) as response:
                     response.raise_for_status()
-                    audio = await self._parse_sse(response)
+                    audio = await self._parse_sse(
+                        response, model=self.model, voice=voice
+                    )
         except TTSProviderError:
             raise
         except (httpx.HTTPError, ValueError) as exc:
@@ -102,7 +104,12 @@ class AliyunTTSProvider:
         return SynthesisResult(audio)
 
     @staticmethod
-    async def _parse_sse(response: httpx.Response) -> bytes:
+    async def _parse_sse(
+        response: httpx.Response,
+        *,
+        model: str | None = None,
+        voice: str | None = None,
+    ) -> bytes:
         chunks: list[bytes] = []
         async for raw_line in response.aiter_lines():
             if not raw_line.startswith("data:"):
@@ -115,8 +122,21 @@ class AliyunTTSProvider:
             except json.JSONDecodeError as exc:
                 raise TTSProviderError("阿里云 TTS 响应解析失败") from exc
             if event.get("code"):
+                safe_message = _safe_message(event.get("message"))
+                if "engine error [411]" in safe_message.lower():
+                    identity = (
+                        f"（model={model}，voice={voice}）" if model and voice else ""
+                    )
+                    example = (
+                        f"，基础音色请填写完整 voice 参数，例如 {model}-音色后缀"
+                        if model
+                        else "，基础音色请填写包含模型前缀的完整 voice 参数"
+                    )
+                    raise TTSProviderError(
+                        f"阿里云 TTS 合成失败：当前模型不支持该音色{identity}{example}"
+                    )
                 raise TTSProviderError(
-                    f"阿里云 TTS 合成失败：{_safe_message(event.get('message'))}"
+                    f"阿里云 TTS 合成失败：{safe_message}"
                 )
             audio = (event.get("output") or {}).get("audio") or {}
             if audio.get("data"):
@@ -205,11 +225,11 @@ def _truncate_instruction(text: str, max_units: int = 100) -> str:
     return text
 
 
-def make_provider(settings, engine: str):
+def make_provider(settings, engine: str, *, model: str | None = None):
     if engine == "aliyun":
         return AliyunTTSProvider(
             settings.aliyun_tts_api_key,
-            settings.aliyun_tts_model_id,
+            model or settings.aliyun_tts_model_id,
         )
     if engine == "volc":
         return VolcTTSProvider(settings.volc_tts_app_id, settings.volc_tts_access_token)

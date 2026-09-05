@@ -249,7 +249,37 @@ export interface TtsVoice {
   id: string
   name: string
   tags: string[]
-  recommended_scene: string
+  recommended_scene: string | null
+  source: 'system' | 'custom'
+  custom_voice_id: string | null
+  verification_status: CustomVoiceVerificationStatus | null
+}
+
+export type CustomVoiceVerificationStatus = 'unverified' | 'verified' | 'failed'
+
+export interface TtsCustomVoice {
+  id: string
+  engine: 'aliyun'
+  model: string
+  voice_id: string
+  name: string | null
+  display_name: string
+  verification_status: CustomVoiceVerificationStatus
+  last_checked_at: number | null
+  last_verified_at: number | null
+  last_error: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface TtsCustomVoicesResponse {
+  items: TtsCustomVoice[]
+}
+
+export interface TtsCustomVoiceVerifyResponse {
+  voice: TtsCustomVoice
+  preview_url: string
+  cache_hit: boolean
 }
 
 export interface TtsEngine {

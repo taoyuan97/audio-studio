@@ -9,6 +9,26 @@ export interface ScriptSourceOption {
   updatedAt: number
 }
 
+const ALIYUN_BASIC_VOICE_MODELS = new Set([
+  'qwen-audio-3.0-tts-plus',
+  'qwen-audio-3.0-tts-flash',
+])
+
+/**
+ * 官方基础音色表常同时展示试听文件后缀和完整 voice。只给出候选值，
+ * 不静默改写，以兼容命名规则不同的声音复刻音色。
+ */
+export function suggestAliyunBasicVoiceId(model: string, voiceId: string): string | null {
+  const normalizedModel = model.trim()
+  const normalizedVoiceId = voiceId.trim()
+  if (
+    !ALIYUN_BASIC_VOICE_MODELS.has(normalizedModel)
+    || !normalizedVoiceId
+    || normalizedVoiceId.startsWith(`${normalizedModel}-`)
+  ) return null
+  return `${normalizedModel}-${normalizedVoiceId}`
+}
+
 /**
  * 脚本产物名允许独立于会话名；TTS 选择来源时以当前会话标题为主标识，
  * 同时保留产物名/版本供辨认。孤立产物稳定回退自身名称。
@@ -39,4 +59,14 @@ export function buildScriptSourceOptions(
 export function pickVoiceId(engine: TtsEngine | undefined, preset: TtsScenePreset | undefined): string {
   const recommended = engine?.voices.find((voice) => preset?.recommended_voice_ids.includes(voice.id))
   return recommended?.id ?? engine?.voices[0]?.id ?? ''
+}
+
+/** 自定义音色是用户显式选择，场景切换时保留；系统音色继续跟随推荐预设。 */
+export function pickVoiceIdForScene(
+  engine: TtsEngine | undefined,
+  preset: TtsScenePreset | undefined,
+  currentVoiceId: string,
+): string {
+  const current = engine?.voices.find((voice) => voice.id === currentVoiceId)
+  return current?.source === 'custom' ? currentVoiceId : pickVoiceId(engine, preset)
 }
