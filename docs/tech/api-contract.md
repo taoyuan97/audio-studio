@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.4
+- 版本：v2.5
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v2.5 明确 T014 客户端历史版本文档导出直接读取版本 `content.text`，不新增导出 API
 - 变更记录：v2.4 增加 T013 脚本配置读写、TTS inline tags 能力字段、`vocal` segment、显式草稿保存与非兼容引擎降级语义
 - 变更记录：v2.3 扩展 T012 混音请求：人声/背景独立倍速、默认值与范围、单轨参数和有效时长规范化语义
 - 变更记录：v2.2 增加 T011 阿里云自定义音色库 CRUD、按模型合并 defaults、试听验证状态与模型感知缓存；TTS 任务冻结提交时模型快照
@@ -354,6 +355,7 @@ SSE 事件流（协议见第 11 节）。
 脚本不可变版本列表，按 version_no 倒序；草稿不在此列表。
 
 - 响应 200：`{ "items": [{ "id": "ver_...", "artifact_id": "art_...", "version_no": 2, "params": {}, "content": {}, "created_at": 0 }] }`。
+- T014 的 Markdown/TXT 导出由浏览器直接读取已返回版本的 `content.text`；不得由 `segments` 反向拼接，不上传正文，也不新增服务端导出或临时文件 API。
 
 ### 6.8 POST /api/artifacts/{id}/versions/{version_id}/restore-draft
 

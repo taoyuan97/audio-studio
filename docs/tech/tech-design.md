@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.4
-- 状态：设计已确认、T013 已完成并通过自动化验收
+- 版本：v2.5
+- 状态：设计已确认、T014 已完成并通过自动化验收
 - 创建日期：2026-08-26
+- 变更记录：v2.5 增加 T014 历史脚本版本本地导出：可编辑标题、Markdown/TXT 内容规则、系统另存为与浏览器下载回退，不新增服务端 API
 - 变更记录：v2.4 增加 T013 脚本标签编辑器：配置化情绪/语气词/停顿标签、显式草稿保存、全屏共享编辑状态，以及 Qwen-Audio 原生标签转换和非兼容引擎降级
 - 变更记录：v2.3 增加 T012 混音分轨倍速：人声/背景独立 `atempo`、有效时长与成品时间轴规则、单轨增益一致性和预览边界
 - 变更记录：v2.2 增加 T011 阿里云自定义音色库：SQLite 按模型持久化、设置页独立 Tab、试听验证状态、模型感知缓存与 TTS 模型快照一致性
@@ -19,7 +20,7 @@
 - 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
 - 变更记录：v1.2 API 契约与数据模型拆分为独立文档（`api-contract.md` / `data-model.md`，实现级单一事实源），本文 5.2/5.4 改为摘要概览
 - 变更记录：v1.1 吸收 meditation-guide-studio（`C:\projects\apps\meditation-guide-studio`）已验证实现——TTS 双引擎接入代码移植、情绪 instruction 映射定论、SSML break/静音切分双策略、音频落盘原子化规范、run 进度持久化、MiniMax 同步接口修正（E1）与计费安全重试（E8）、48kHz 基准（E2）、呼吸停顿 4s/5s（E4）
-- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T013`（任务拆分）
+- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T014`（任务拆分）
 - 技术栈基准：`article-studio/docs/tech/tech-design.md`
 - 交互基准：`prototype/`（已验收原型，前端功能语义来源）
 
@@ -214,6 +215,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 - **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`speech|pause|vocal`，含 `emotion/speed/seconds/tag` 等按类型字段）+ 预估时长（语速档 × 字数 + 停顿求和，vocal 权重为 0）。支持旧标签及语法合法的内部 `[emotion:name]` / `[vocal:name]`（无需仍存在于当前配置）；其他未知方括号标签按既有策略剔除，前端不重复实现解析。
 - **会话流**：POST messages → 同事务写用户消息与 `.md` / `.txt` 参考附件 → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 assistant message + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
 - **编辑状态**：人工编辑不做防抖或定时持久化；“保存草稿”显式 PATCH，“完成编辑”在 dirty 时先保存成功再退出，“放弃修改”二次确认后恢复服务端草稿。右栏与全屏弹窗复用同一份 draft/dirty/selection/error 状态，关闭全屏不结束编辑。
+- **历史版本文档导出（T014）**：版本历史弹窗每次打开默认选中版本号最大的最新版本；预览区可冻结当前所选不可变版本并打开页面级导出弹窗。每次打开导出弹窗以浏览器本地时间生成 `{产物名}-vN-MMDD-HHmm` 标题，默认 Markdown、可切换 TXT；正文只读该版本 `content.text`，除统一文件末尾 LF 外不改写内部空白或脚本标签。保存优先使用 `showSaveFilePicker`，用户取消静默保留弹窗；能力不可用时使用临时 Blob URL 和 `<a download>` 回退并立即回收。该流程纯客户端执行，不写草稿、版本、缓存或服务端数据。
 - 多轮 refinement：历史消息全部入上下文（预算内截断），用户可自然语言微调。当前轮附件完整加入带不可信资料声明的 JSON 安全边界；历史正文优先占用 12000 字符预算，剩余预算按由近到远顺序加入历史附件并允许截断。
 
 ### 5.6 TTS 线设计

@@ -870,7 +870,50 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 14px;
+}
+
+.version-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.script-export-form,
+.script-export-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.script-export-form {
+  gap: 18px;
+}
+
+.script-export-version,
+.script-export-field label,
+.script-export-label {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.script-export-field .ant-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.script-export-error {
+  color: var(--ant-color-error);
+  font-size: 12px;
+}
+
+.script-export-hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .version-history-layout .version-preview .script-view {

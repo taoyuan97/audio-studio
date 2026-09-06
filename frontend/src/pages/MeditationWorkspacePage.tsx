@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRightOutlined,
   CheckOutlined,
+  DownloadOutlined,
   EditOutlined,
   FullscreenOutlined,
   HistoryOutlined,
@@ -41,6 +42,7 @@ import ModelSelect from '../components/ModelSelect'
 import MessageList, { type RunFailure } from '../features/script-workspace/MessageList'
 import ScriptView from '../features/script-workspace/ScriptView'
 import ScriptEditor, { type SelectionRange } from '../features/script-workspace/ScriptEditor'
+import ExportScriptModal from '../features/script-export/ExportScriptModal'
 import type { FocusLayoutContext } from '../layouts/FocusLayout'
 import {
   formatFileSize,
@@ -315,6 +317,8 @@ export default function MeditationWorkspacePage() {
   const [scriptName, setScriptName] = useState('')
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [selectedVersion, setSelectedVersion] = useState<ScriptVersion | null>(null)
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportVersion, setExportVersion] = useState<ScriptVersion | null>(null)
   const [editorDirty, setEditorDirty] = useState(false)
   const [draftSaveFailed, setDraftSaveFailed] = useState(false)
   const [selection, setSelection] = useState<SelectionRange>({ start: 0, end: 0 })
@@ -406,6 +410,17 @@ export default function MeditationWorkspacePage() {
     queryFn: () => listArtifactVersions(artifact!.id),
     enabled: versionsOpen && Boolean(artifact?.id),
   })
+
+  useEffect(() => {
+    if (!versionsOpen || selectedVersion) return
+    const versions = versionsQuery.data?.items
+    if (!versions?.length) return
+    setSelectedVersion(
+      versions.reduce((latest, version) =>
+        version.version_no > latest.version_no ? version : latest,
+      ),
+    )
+  }, [selectedVersion, versionsOpen, versionsQuery.data])
 
   const restoreMutation = useMutation({
     mutationFn: (version: ScriptVersion) =>
@@ -717,6 +732,8 @@ export default function MeditationWorkspacePage() {
         onCancel={() => {
           setVersionsOpen(false)
           setSelectedVersion(null)
+          setExportModalOpen(false)
+          setExportVersion(null)
         }}
         destroyOnHidden
         getContainer={false}
@@ -744,14 +761,26 @@ export default function MeditationWorkspacePage() {
               <>
                 <div className="version-preview-head">
                   <strong>v{selectedVersion.version_no}</strong>
-                  <Button
-                    type="primary"
-                    size="small"
-                    loading={restoreMutation.isPending}
-                    onClick={() => restoreMutation.mutate(selectedVersion)}
-                  >
-                    恢复为草稿
-                  </Button>
+                  <div className="version-preview-actions">
+                    <Button
+                      type="primary"
+                      size="small"
+                      loading={restoreMutation.isPending}
+                      onClick={() => restoreMutation.mutate(selectedVersion)}
+                    >
+                      恢复为草稿
+                    </Button>
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      onClick={() => {
+                        setExportVersion(selectedVersion)
+                        setExportModalOpen(true)
+                      }}
+                    >
+                      导出文档
+                    </Button>
+                  </div>
                 </div>
                 <ScriptView content={selectedVersion.content} scriptConfig={scriptConfigQuery.data} />
               </>
@@ -761,6 +790,20 @@ export default function MeditationWorkspacePage() {
           </div>
         </div>
       </Modal>
+
+      <ExportScriptModal
+        open={exportModalOpen}
+        artifactName={artifact?.name ?? ''}
+        version={exportVersion}
+        onCancel={() => {
+          setExportModalOpen(false)
+          setExportVersion(null)
+        }}
+        onExported={() => {
+          setExportModalOpen(false)
+          setExportVersion(null)
+        }}
+      />
     </div>
   )
 }
