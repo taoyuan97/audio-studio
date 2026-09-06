@@ -19,6 +19,7 @@ interface MessageListProps {
   /** 失败卡片（run.failed 后保留，直到重试/再次发送） */
   failure: RunFailure | null
   onRetry: () => void
+  retrying?: boolean
 }
 
 /** 对话消息流：用户/助手气泡分型、流式增量气泡、失败卡片（重试）。 */
@@ -29,6 +30,7 @@ export default function MessageList({
   streaming,
   failure,
   onRetry,
+  retrying = false,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -99,7 +101,7 @@ export default function MessageList({
           <div className="failure-card" role="alert">
             <div className="failure-title">生成失败</div>
             <div className="failure-desc">{runErrorText(failure.code, failure.message)}</div>
-            <Button size="small" icon={<ReloadOutlined />} onClick={onRetry}>
+            <Button size="small" icon={<ReloadOutlined />} onClick={onRetry} loading={retrying}>
               重试
             </Button>
           </div>

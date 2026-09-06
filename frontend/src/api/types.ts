@@ -94,6 +94,7 @@ export interface Conversation {
 export interface MessageParams {
   duration: ScriptDuration
   model: string
+  thinking_enabled?: boolean
 }
 
 export interface MessageAttachment {
@@ -387,6 +388,10 @@ export interface ProviderStatus {
   editable: boolean
   runtime_credential_fields: Array<'credential' | 'app_id' | 'access_token'>
   model_id?: string
+  /** 仅 Moonshot Provider 返回；保存的 K2.5/K2.6 思考偏好 */
+  thinking_enabled?: boolean
+  thinking_configurable?: boolean
+  thinking_unavailable_reason?: string | null
 }
 
 /** GET /api/settings/status */

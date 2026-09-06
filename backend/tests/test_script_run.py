@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -21,6 +22,7 @@ from app.conversations import (
 )
 from app.database import Repository
 from app.errors import ApiError
+from app.llm.registry import LlmStreamEvent, ModelRegistry
 from app.main import create_app
 
 from conftest import make_settings
@@ -382,6 +384,80 @@ class TestCancelAndFailure:
             f"/api/conversations/{conversation['id']}/messages"
         ).json()["items"]
         assert [m["role"] for m in messages] == ["user"]
+
+    def test_cancel_is_checked_during_moonshot_reasoning(
+        self, tmp_path, monkeypatch
+    ):
+        async def reasoning_stream(_registry, _model, _messages, **_kwargs):
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                yield LlmStreamEvent("reasoning")
+            yield LlmStreamEvent("content", content="不应保存")
+            yield LlmStreamEvent("done")
+
+        monkeypatch.setattr(ModelRegistry, "stream_chat", reasoning_stream)
+        app = create_app(
+            settings=make_settings(
+                tmp_path,
+                fake_mode=False,
+                moonshot_api_key="sk-test",
+                moonshot_model_id="kimi-k2.6",
+            )
+        )
+        with TestClient(app) as client:
+            conversation = create_conversation(client)
+            response = client.post(
+                f"/api/conversations/{conversation['id']}/messages",
+                json={"text": "来一段冥想", "duration": 5, "model": "kimi-k2.6"},
+            )
+            assert response.status_code == 202
+            run_id = response.json()["run_id"]
+            time.sleep(0.05)
+            assert client.post(f"/api/runs/{run_id}/cancel").status_code == 200
+            assert wait_run_terminal(client, run_id)["status"] == "cancelled"
+            detail = client.get(f"/api/conversations/{conversation['id']}").json()
+            assert detail["script_draft"] is None
+            messages = client.get(
+                f"/api/conversations/{conversation['id']}/messages"
+            ).json()["items"]
+            assert [message["role"] for message in messages] == ["user"]
+
+    def test_incomplete_moonshot_stream_does_not_save_partial_script(
+        self, tmp_path, monkeypatch
+    ):
+        async def incomplete_stream(_registry, _model, _messages, **_kwargs):
+            yield LlmStreamEvent("content", content="部分脚本")
+            raise ApiError(
+                "SCRIPT_LLM_STREAM_INCOMPLETE",
+                "模型响应中断，未保存不完整内容，请重试",
+                502,
+            )
+
+        monkeypatch.setattr(ModelRegistry, "stream_chat", incomplete_stream)
+        app = create_app(
+            settings=make_settings(
+                tmp_path,
+                fake_mode=False,
+                moonshot_api_key="sk-test",
+                moonshot_model_id="kimi-k2.6",
+            )
+        )
+        with TestClient(app) as client:
+            conversation = create_conversation(client)
+            response = client.post(
+                f"/api/conversations/{conversation['id']}/messages",
+                json={"text": "来一段冥想", "duration": 5, "model": "kimi-k2.6"},
+            )
+            assert response.status_code == 202
+            terminal = wait_run_terminal(client, response.json()["run_id"])
+            assert terminal["status"] == "failed"
+            assert terminal["error"]["code"] == "SCRIPT_LLM_STREAM_INCOMPLETE"
+            detail = client.get(f"/api/conversations/{conversation['id']}").json()
+            assert detail["script_draft"] is None
+            messages = client.get(
+                f"/api/conversations/{conversation['id']}/messages"
+            ).json()["items"]
+            assert [message["role"] for message in messages] == ["user"]
 
     def test_retry_after_failure(self, app: Starlette, client: TestClient):
         """失败卡片重试：重新注册可用 handler 后以原 user 消息重生成。"""

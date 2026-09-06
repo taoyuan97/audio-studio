@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     deepseek_model_id: str = "deepseek-chat"
     dashscope_model_id: str = "qwen-plus"
     moonshot_model_id: str = "kimi-k2-0905-preview"
+    moonshot_thinking_enabled: bool = True
 
     # 阿里云 TTS（与通义千问 LLM 配置隔离）
     aliyun_tts_api_key: str = ""
@@ -169,7 +170,11 @@ class SettingsStore:
     PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
         "llm_deepseek": ("deepseek_api_key", "deepseek_model_id"),
         "llm_qwen": ("dashscope_api_key", "dashscope_model_id"),
-        "llm_moonshot": ("moonshot_api_key", "moonshot_model_id"),
+        "llm_moonshot": (
+            "moonshot_api_key",
+            "moonshot_model_id",
+            "moonshot_thinking_enabled",
+        ),
         "tts_aliyun": ("aliyun_tts_api_key", "aliyun_tts_model_id"),
         "tts_volc": ("volc_tts_app_id", "volc_tts_access_token"),
         "minimax": ("minimax_api_key", "minimax_model_id"),

@@ -26,7 +26,14 @@ export function getSettingsStatus(signal?: AbortSignal) {
 
 export function updateProvider(
   provider: SettingsProviderId,
-  payload: { revision: number; credential?: string; model_id?: string; app_id?: string; access_token?: string },
+  payload: {
+    revision: number
+    credential?: string
+    model_id?: string
+    app_id?: string
+    access_token?: string
+    thinking_enabled?: boolean
+  },
 ) {
   return apiFetch<ProviderUpdateResponse>(`/api/settings/providers/${provider}`, { method: 'PATCH', body: payload })
 }

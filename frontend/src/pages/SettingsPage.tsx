@@ -6,7 +6,7 @@ import {
   SaveOutlined,
 } from '@ant-design/icons'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, App, Button, Card, Form, Input, InputNumber, Popconfirm, Skeleton, Space, Tabs, Tag } from 'antd'
+import { Alert, App, Button, Card, Form, Input, InputNumber, Popconfirm, Skeleton, Space, Switch, Tabs, Tag } from 'antd'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -39,6 +39,25 @@ function sourceLabel(source: ProviderStatus['credential_source']): string {
   return source === 'runtime' ? '浏览器配置' : source === 'env' ? '.env' : source === 'mixed' ? '混合来源' : '未配置'
 }
 
+function moonshotThinkingCapability(model: string | undefined) {
+  const normalized = model?.trim().toLowerCase() ?? ''
+  if (normalized === 'kimi-k2.5' || normalized === 'kimi-k2.6') {
+    return { configurable: true, reason: null }
+  }
+  if (normalized === 'kimi-k2.7-code' || normalized === 'kimi-k2.7-code-highspeed') {
+    return { configurable: false, reason: 'Kimi K2.7 Code 始终开启思考，不能关闭' }
+  }
+  if (normalized === 'kimi-k3') {
+    return { configurable: false, reason: 'Kimi K3 不使用 thinking 开关' }
+  }
+  return { configurable: false, reason: '当前模型不支持可配置的思考模式' }
+}
+
+interface ProviderFormValues {
+  model_id?: string
+  thinking_enabled?: boolean
+}
+
 function ProviderCard({
   id, title, kind, hasModel, status, revision,
 }: {
@@ -52,6 +71,8 @@ function ProviderCard({
   const { message } = App.useApp()
   const queryClient = useQueryClient()
   const [form] = Form.useForm()
+  const watchedModel = Form.useWatch<string>('model_id', form) ?? status.model_id
+  const thinkingCapability = moonshotThinkingCapability(watchedModel)
   const [credential, setCredential] = useState('')
   const [credentialDirty, setCredentialDirty] = useState(false)
   const [credentialVisible, setCredentialVisible] = useState(false)
@@ -107,9 +128,17 @@ function ProviderCard({
     }
   }
   const saveMutation = useMutation({
-    mutationFn: (values: Record<string, string>) => {
-      const payload: { revision: number; credential?: string; model_id?: string; app_id?: string; access_token?: string } = { revision }
+    mutationFn: (values: ProviderFormValues) => {
+      const payload: {
+        revision: number
+        credential?: string
+        model_id?: string
+        app_id?: string
+        access_token?: string
+        thinking_enabled?: boolean
+      } = { revision }
       if (hasModel) payload.model_id = values.model_id
+      if (id === 'llm_moonshot') payload.thinking_enabled = values.thinking_enabled
       if (id === 'tts_volc') {
         if (appIdDirty) payload.app_id = appId
         if (accessTokenDirty) payload.access_token = accessToken
@@ -214,10 +243,30 @@ function ProviderCard({
           form={form}
           name={id}
           layout="vertical"
-          initialValues={{ model_id: status.model_id }}
+          initialValues={{
+            model_id: status.model_id,
+            thinking_enabled: status.thinking_enabled ?? true,
+          }}
           onFinish={(values) => saveMutation.mutate(values)}
         >
           {hasModel && <Form.Item name="model_id" label="模型 ID" rules={[{ required: true, whitespace: true, message: '请输入模型 ID' }]}><Input /></Form.Item>}
+          {id === 'llm_moonshot' && (
+            <Form.Item
+              name="thinking_enabled"
+              label="深度思考"
+              valuePropName="checked"
+              extra={thinkingCapability.configurable
+                ? '开启后模型会先推理再生成正文，耗时和 Token 消耗可能增加'
+                : thinkingCapability.reason}
+            >
+              <Switch
+                aria-label="Kimi 深度思考"
+                checkedChildren="开启"
+                unCheckedChildren="关闭"
+                disabled={!thinkingCapability.configurable}
+              />
+            </Form.Item>
+          )}
           {credentialFields}
           <Space wrap>
             <Button

@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.5
+- 版本：v2.6
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v2.6 增加 T015 Kimi K2.5/K2.6 思考开关、Moonshot 流式完整性与分类错误、失败消息强一致重试契约
 - 变更记录：v2.5 明确 T014 客户端历史版本文档导出直接读取版本 `content.text`，不新增导出 API
 - 变更记录：v2.4 增加 T013 脚本配置读写、TTS inline tags 能力字段、`vocal` segment、显式草稿保存与非兼容引擎降级语义
 - 变更记录：v2.3 扩展 T012 混音请求：人声/背景独立倍速、默认值与范围、单轨参数和有效时长规范化语义
@@ -200,10 +201,11 @@
 
 ### 4.7 POST /api/conversations/{id}/messages/{mid}/retry
 
-重试失败的助手消息（以该用户消息及其已持久化附件重新生成，不复制 user 消息或附件）。
+重试失败的助手消息（以该用户消息及其已持久化附件重新生成，不复制 user 消息或附件）。客户端调用前必须重新读取消息列表并使用响应中的最后一条 user 消息 ID，不得仅依赖可能过期的本地查询缓存。
 
 - 请求体：空。
-- 响应 202：run 载荷。409/404 同前。
+- 响应 202：run 载荷。非最新 user 消息返回 409 `MESSAGE_NOT_RETRYABLE`；404 同前。
+- retry 创建新 run，任务开始执行时读取最新 Provider 设置，因此会使用当时的 Kimi 思考开关值。
 
 ### 4.8 GET /api/conversations/{id}/models
 
@@ -635,7 +637,7 @@ SSE 事件流（协议见第 11 节）。
   "providers": {
     "llm_deepseek": { "configured": true, "credential_masked": "sk-***cdef", "credential_source": "runtime", "runtime_credential_fields": ["credential"], "model_id": "deepseek-chat", "editable": true },
     "llm_qwen": { "configured": true, "credential_masked": "sk-***ab12", "credential_source": "env", "runtime_credential_fields": [], "model_id": "qwen-plus", "editable": true },
-    "llm_moonshot": { "configured": false, "credential_masked": null, "credential_source": null, "runtime_credential_fields": [], "model_id": "kimi-k2-0905-preview", "editable": true },
+    "llm_moonshot": { "configured": false, "credential_masked": null, "credential_source": null, "runtime_credential_fields": [], "model_id": "kimi-k2.6", "thinking_enabled": true, "thinking_configurable": true, "thinking_unavailable_reason": null, "editable": true },
     "tts_aliyun": { "configured": true, "credential_masked": "sk-***9x8y", "credential_source": "runtime", "runtime_credential_fields": ["credential"], "model_id": "qwen-audio-3.0-tts-plus", "editable": true },
     "tts_volc": { "configured": true, "credential_masked": "123***3456 / tok***5678", "credential_source": "mixed", "runtime_credential_fields": ["app_id"], "editable": true },
     "minimax": { "configured": true, "credential_masked": "eyJ***jk4", "credential_source": "runtime", "runtime_credential_fields": ["credential"], "model_id": "music-3.0", "editable": true }
@@ -648,6 +650,8 @@ SSE 事件流（协议见第 11 节）。
 
 `credential_source` 为 `runtime | env | mixed | null`；火山 App ID/Token 分别来自运行时与环境时为 `mixed`。`runtime_credential_fields` 只列出实际保存于 `settings.json`、允许回显的前端字段名，不含值。
 
+`llm_moonshot.thinking_enabled` 是持久化偏好，默认 `true`；仅模型 ID 精确为 `kimi-k2.5` 或 `kimi-k2.6` 时 `thinking_configurable=true`。其他模型禁用设置页开关，并通过 `thinking_unavailable_reason` 说明原因。
+
 ### 10.2 PATCH /api/settings/providers/{provider}
 
 保存 provider 配置。`provider` ∈ `llm_deepseek | llm_qwen | llm_moonshot | tts_aliyun | tts_volc | minimax`。
@@ -656,6 +660,12 @@ SSE 事件流（协议见第 11 节）。
 
 ```json
 { "revision": 3, "credential": "sk-new", "model_id": "deepseek-chat" }
+```
+
+- 请求示例（Kimi K2.5/K2.6，可只更新思考偏好）：
+
+```json
+{ "revision": 3, "model_id": "kimi-k2.6", "thinking_enabled": false }
 ```
 
 - 请求示例（火山 TTS）：
@@ -672,6 +682,7 @@ SSE 事件流（协议见第 11 节）。
 
 - 凭据字段未传表示保留当前值；空字符串非法，不承担清除语义。
 - `model_id` 去除首尾空白后必须非空，不要求跨 provider 唯一。
+- `thinking_enabled` 必须是 JSON boolean，且仅 `llm_moonshot` 接受；保存偏好不因切换到不支持的模型或清除 API Key 而丢失。
 - 校验和原子持久化全部成功后更新内存快照，响应 200 为新的脱敏 provider 状态及递增后的 revision。
 - revision 过期返回 409 `SETTINGS_REVISION_CONFLICT`；不支持的 provider/字段返回 422 `SETTINGS_PARAMS_INVALID`。
 
@@ -804,6 +815,15 @@ SSE 事件流（协议见第 11 节）。
 | `SCRIPT_ATTACHMENT_CONTENT_INVALID` | 422 | 正文为空、含 NUL 或合计超过 60000 字符 | 提示转换/缩减文件 |
 | `SCRIPT_LLM_NOT_CONFIGURED` | 422 | 模型未配置 | 引导去设置页 |
 | `SCRIPT_LLM_ERROR` | 502 | LLM 调用失败（脱敏） | 失败卡片+重试 |
+| `SCRIPT_LLM_REQUEST_INVALID` | 502 | 上游拒绝模型或思考参数 | 展示安全参数提示 |
+| `SCRIPT_LLM_CONTENT_REJECTED` | 502 | 输入或输出触发内容安全 | 提示调整内容 |
+| `SCRIPT_LLM_AUTH_ERROR` | 502 | API Key 无效或平台不匹配 | 检查设置 |
+| `SCRIPT_LLM_ACCESS_DENIED` | 502 | 账号无模型权限 | 检查账号权限 |
+| `SCRIPT_LLM_MODEL_NOT_FOUND` | 502 | 模型不存在或不可访问 | 检查模型 ID |
+| `SCRIPT_LLM_QUOTA_EXCEEDED` | 502 | 余额或 Token 额度不足 | 补充额度后重试 |
+| `SCRIPT_LLM_RATE_LIMITED` | 502 | 服务繁忙或请求受限 | 稍后重试 |
+| `SCRIPT_LLM_STREAM_INCOMPLETE` | 502 | 流未收到 `[DONE]` 或中途断开 | 不保存部分脚本并允许重试 |
+| `SCRIPT_LLM_OUTPUT_TRUNCATED` | 502 | `finish_reason=length` | 不保存部分脚本并提示重试 |
 | `SCRIPT_TIMEOUT` | 504 | LLM 流式超时 | 失败卡片+重试 |
 | `TTS_TEXT_EMPTY` / `TTS_TEXT_TOO_LONG` | 422 | 文本校验 | 表单校验提示 |
 | `TTS_PARAMS_INVALID` | 422 | 引擎/音色/语速/格式非法 | 表单校验提示 |

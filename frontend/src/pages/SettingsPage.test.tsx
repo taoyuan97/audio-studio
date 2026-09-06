@@ -56,7 +56,13 @@ describe('SettingsPage', () => {
       providers: {
         llm_deepseek: { ...editable, model_id: 'deepseek-chat' },
         llm_qwen: { ...editable, model_id: 'qwen-plus' },
-        llm_moonshot: { ...editable, model_id: 'kimi-k2' },
+        llm_moonshot: {
+          ...editable,
+          model_id: 'kimi-k2.6',
+          thinking_enabled: true,
+          thinking_configurable: true,
+          thinking_unavailable_reason: null,
+        },
         tts_aliyun: { ...editable, model_id: 'qwen-audio' },
         tts_volc: { ...editable, credential_masked: 'app***1234 / tok***5678', runtime_credential_fields: ['app_id', 'access_token'] },
         minimax: { ...editable, credential_masked: 'min***3456', model_id: 'music-3.0' },
@@ -161,6 +167,29 @@ describe('SettingsPage', () => {
       model_id: 'music-custom',
       credential: 'updated-minimax-key',
     }))
+  })
+
+  it('configures Kimi thinking only for supported models', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const thinking = await screen.findByLabelText('Kimi 深度思考')
+    const card = thinking.closest('.ant-card') as HTMLElement
+    expect(thinking).toBeChecked()
+    expect(thinking).toBeEnabled()
+
+    await user.click(thinking)
+    await user.click(within(card).getByRole('button', { name: /保存/ }))
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('llm_moonshot', {
+      revision: 2,
+      model_id: 'kimi-k2.6',
+      thinking_enabled: false,
+    }))
+
+    const modelInput = within(card).getByLabelText('模型 ID')
+    await user.clear(modelInput)
+    await user.type(modelInput, 'kimi-k3')
+    expect(thinking).toBeDisabled()
+    expect(within(card).getByText('Kimi K3 不使用 thinking 开关')).toBeInTheDocument()
   })
 
   it('clears the MiniMax browser API key', async () => {

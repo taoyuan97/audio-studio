@@ -7,7 +7,7 @@ import time
 from typing import Literal
 import httpx
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from .config import (
     DEFAULT_SCRIPT_EMOTION_TAGS,
@@ -48,6 +48,7 @@ class ProviderUpdate(BaseModel):
     model_id: str | None = None
     app_id: str | None = None
     access_token: str | None = None
+    thinking_enabled: StrictBool | None = None
 
 
 class RevisionRequest(BaseModel):
@@ -122,6 +123,15 @@ def _provider_status(store: SettingsStore, provider: str) -> dict:
     }
     if model_id is not None:
         item["model_id"] = model_id
+    if provider == "llm_moonshot":
+        capabilities = ModelRegistry.moonshot_capabilities(model_id)
+        item.update(
+            {
+                "thinking_enabled": settings.moonshot_thinking_enabled,
+                "thinking_configurable": capabilities.thinking_configurable,
+                "thinking_unavailable_reason": capabilities.thinking_unavailable_reason,
+            }
+        )
     return item
 
 
@@ -233,7 +243,11 @@ def update_provider(provider: str, payload: ProviderUpdate, request: Request):
     field_map = {
         "llm_deepseek": {"credential": "deepseek_api_key", "model_id": "deepseek_model_id"},
         "llm_qwen": {"credential": "dashscope_api_key", "model_id": "dashscope_model_id"},
-        "llm_moonshot": {"credential": "moonshot_api_key", "model_id": "moonshot_model_id"},
+        "llm_moonshot": {
+            "credential": "moonshot_api_key",
+            "model_id": "moonshot_model_id",
+            "thinking_enabled": "moonshot_thinking_enabled",
+        },
         "tts_aliyun": {"credential": "aliyun_tts_api_key", "model_id": "aliyun_tts_model_id"},
         "tts_volc": {"app_id": "volc_tts_app_id", "access_token": "volc_tts_access_token"},
         "minimax": {"credential": "minimax_api_key", "model_id": "minimax_model_id"},
@@ -307,12 +321,13 @@ async def _probe_llm(provider: str, request: Request) -> str:
         "llm_moonshot": settings.moonshot_model_id,
     }[provider]
     chunks = []
-    async for chunk in registry.stream_chat(
+    async for event in registry.stream_chat(
         model,
         [{"role": "user", "content": "请只回复：连接成功"}],
         timeout_seconds=min(settings.llm_timeout_seconds, 30),
     ):
-        chunks.append(chunk)
+        if event.kind == "content" and event.content:
+            chunks.append(event.content)
     if not chunks:
         raise RuntimeError("模型返回空内容")
     return "模型响应成功"

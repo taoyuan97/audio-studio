@@ -12,6 +12,7 @@ def test_model_id_defaults_preserve_existing_models():
     assert settings.deepseek_model_id == "deepseek-chat"
     assert settings.dashscope_model_id == "qwen-plus"
     assert settings.moonshot_model_id == "kimi-k2-0905-preview"
+    assert settings.moonshot_thinking_enabled is True
     assert settings.aliyun_tts_model_id == "qwen-audio-3.0-tts-plus"
     assert settings.minimax_model_id == "music-3.0"
     assert settings.e2e_mode is False
@@ -65,3 +66,7 @@ def test_duplicate_model_ids_are_allowed_across_providers():
         moonshot_model_id="other-model",
     )
     assert settings.deepseek_model_id == settings.dashscope_model_id == "same-model"
+
+
+def test_moonshot_thinking_boolean_is_configurable():
+    assert Settings(_env_file=None, moonshot_thinking_enabled=False).moonshot_thinking_enabled is False

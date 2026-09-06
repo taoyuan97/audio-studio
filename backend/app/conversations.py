@@ -437,10 +437,11 @@ def make_script_handler(repo: Repository, settings_store: SettingsStore):
                 chunks.append(delta)
             topic = matched_topic
         else:
-            async for delta in registry.stream_chat(model, llm_messages):
+            async for event in registry.stream_chat(model, llm_messages):
                 ctx.check_cancelled()
-                await ctx.emit("assistant.delta", {"delta": delta})
-                chunks.append(delta)
+                if event.kind == "content" and event.content:
+                    await ctx.emit("assistant.delta", {"delta": event.content})
+                    chunks.append(event.content)
             topic = last_user["content"].strip()[:50] or "冥想引导"
 
         script_text = "".join(chunks).strip()
@@ -454,15 +455,21 @@ def make_script_handler(repo: Repository, settings_store: SettingsStore):
 
         # 生成成功只更新工作草稿；正式版本仅由用户手动保存。
         parsed = parse_script(script_text)
+        draft_params: dict[str, Any] = {
+            "topic": topic,
+            "matched_topic": topic,
+            "duration": duration,
+            "model": model,
+        }
+        if provider == "moonshot":
+            thinking_enabled = registry.effective_moonshot_thinking(model)
+            if thinking_enabled is not None:
+                draft_params["thinking_enabled"] = thinking_enabled
+
         draft = repo.upsert_script_draft(
             conversation["id"],
             source_run_id=ctx.run_id,
-            params={
-                "topic": topic,
-                "matched_topic": topic,
-                "duration": duration,
-                "model": model,
-            },
+            params=draft_params,
             content={"text": script_text, **parsed.as_content()},
             origin="generated",
         )

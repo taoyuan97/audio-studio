@@ -17,6 +17,9 @@ def test_status_is_masked_and_exposes_runtime(client: TestClient):
     assert body["providers"]["minimax"]["model_id"] == "music-3.0"
     assert "credential_masked" in body["providers"]["llm_deepseek"]
     assert body["providers"]["llm_deepseek"]["runtime_credential_fields"] == []
+    assert body["providers"]["llm_moonshot"]["thinking_enabled"] is True
+    assert body["providers"]["llm_moonshot"]["thinking_configurable"] is False
+    assert body["providers"]["llm_moonshot"]["thinking_unavailable_reason"]
     assert body["runtime"]["llm_timeout_seconds"] == 120
     assert "ffprobe_available" in body["ffmpeg"]
     serialized = json.dumps(body)
@@ -149,6 +152,44 @@ def test_provider_update_persists_and_refreshes_models(app, client: TestClient):
     conversation = client.post("/api/conversations", json={"scene": "meditation"}).json()
     models = client.get(f"/api/conversations/{conversation['id']}/models").json()["models"]
     assert any(item["provider"] == "deepseek" and item["model"] == "same-model" for item in models)
+
+
+def test_moonshot_thinking_setting_persists_false_and_does_not_clear_with_key(app, client: TestClient):
+    saved = client.patch(
+        "/api/settings/providers/llm_moonshot",
+        json={
+            "revision": 0,
+            "credential": "browser-moonshot-key",
+            "model_id": "kimi-k2.6",
+            "thinking_enabled": False,
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["provider"]["thinking_enabled"] is False
+    assert saved.json()["provider"]["thinking_configurable"] is True
+    assert app.state.settings_store.current.moonshot_thinking_enabled is False
+
+    restored = SettingsStore(
+        app.state.settings_store._base,
+        app.state.data_dir / "settings.json",
+    )
+    assert restored.current.moonshot_thinking_enabled is False
+
+    cleared = client.request(
+        "DELETE",
+        "/api/settings/providers/llm_moonshot/credentials",
+        json={"revision": 1},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["provider"]["thinking_enabled"] is False
+
+
+def test_moonshot_thinking_update_requires_json_boolean(client: TestClient):
+    response = client.patch(
+        "/api/settings/providers/llm_moonshot",
+        json={"revision": 0, "thinking_enabled": "false"},
+    )
+    assert response.status_code == 422
 
 
 def test_revision_conflict(client: TestClient):

@@ -110,6 +110,7 @@ export default function MeditationWorkspacePage() {
   const [runPhase, setRunPhase] = useState<RunPhase | null>(null)
   const [queuePosition, setQueuePosition] = useState(0)
   const [failure, setFailure] = useState<RunFailure | null>(null)
+  const [retrying, setRetrying] = useState(false)
   const running = activeRunId !== null
 
   // ---------------- 参数与输入 ----------------
@@ -185,6 +186,7 @@ export default function MeditationWorkspacePage() {
     },
     'run.failed': (payload) => {
       setFailure({ code: payload.code, message: payload.message })
+      queryClient.invalidateQueries({ queryKey: ['messages', conversationId] })
       exitRunState()
     },
     'run.cancelled': exitRunState,
@@ -223,6 +225,7 @@ export default function MeditationWorkspacePage() {
         allow_draft_overwrite: allowDraftOverwrite,
       })
       enterRunState(run.run_id)
+      queryClient.invalidateQueries({ queryKey: ['messages', conversationId] })
       setInput('')
       setAttachments([])
       setPendingSend(null)
@@ -265,26 +268,34 @@ export default function MeditationWorkspacePage() {
     }
   }
 
-  const lastUserMessage = useMemo(
-    () => [...messages].reverse().find((item) => item.role === 'user'),
-    [messages],
-  )
-
   const submitRetry = async (allowDraftOverwrite = false) => {
-    if (!conversationId || !lastUserMessage) return
+    if (!conversationId || retrying) return
+    setRetrying(true)
     try {
+      const latestMessages = await listMessages(conversationId)
+      queryClient.setQueryData(['messages', conversationId], latestMessages)
+      const latestUserMessage = [...latestMessages.items]
+        .reverse()
+        .find((item) => item.role === 'user')
+      if (!latestUserMessage) {
+        pushBanner('error', '没有可重试的用户消息')
+        return
+      }
       const run = await retryMessage(
         conversationId,
-        lastUserMessage.id,
+        latestUserMessage.id,
         allowDraftOverwrite,
       )
       enterRunState(run.run_id)
     } catch (error) {
       handleActionError(error, '重试失败')
+    } finally {
+      setRetrying(false)
     }
   }
 
   const handleRetry = () => {
+    if (retrying) return
     const protectedDraft =
       hasUnsavedChanges &&
       (scriptDraft?.origin === 'manual' || scriptDraft?.origin === 'restored')
@@ -485,6 +496,7 @@ export default function MeditationWorkspacePage() {
           streaming={running}
           failure={failure}
           onRetry={handleRetry}
+          retrying={retrying}
         />
 
         <div className="chat-composer">

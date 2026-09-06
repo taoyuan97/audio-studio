@@ -41,9 +41,10 @@ async def probe(provider: str, settings: Settings, output_dir: Path) -> bool:
     started = time.perf_counter()
     chunks: list[str] = []
     try:
-        async for delta in registry.stream_chat(entry.model, messages):
-            chunks.append(delta)
-            print(delta, end="", flush=True)
+        async for event in registry.stream_chat(entry.model, messages):
+            if event.kind == "content" and event.content:
+                chunks.append(event.content)
+                print(event.content, end="", flush=True)
     except ApiError as exc:
         print(f"\nFAIL {provider}: {exc.code} {exc.message}")
         return False

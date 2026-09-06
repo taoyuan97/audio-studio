@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.5
-- 状态：设计已确认、T014 已完成并通过自动化验收
+- 版本：v2.6
+- 状态：设计已确认、T015 已完成并通过自动化与真实 Kimi 人工验收
 - 创建日期：2026-08-26
+- 变更记录：v2.6 增加 T015 Moonshot 模型能力适配、K2.5/K2.6 思考开关、结构化流事件与 `[DONE]` 完整性校验、分类错误和 retry 缓存一致性
 - 变更记录：v2.5 增加 T014 历史脚本版本本地导出：可编辑标题、Markdown/TXT 内容规则、系统另存为与浏览器下载回退，不新增服务端 API
 - 变更记录：v2.4 增加 T013 脚本标签编辑器：配置化情绪/语气词/停顿标签、显式草稿保存、全屏共享编辑状态，以及 Qwen-Audio 原生标签转换和非兼容引擎降级
 - 变更记录：v2.3 增加 T012 混音分轨倍速：人声/背景独立 `atempo`、有效时长与成品时间轴规则、单轨增益一致性和预览边界
@@ -20,7 +21,7 @@
 - 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
 - 变更记录：v1.2 API 契约与数据模型拆分为独立文档（`api-contract.md` / `data-model.md`，实现级单一事实源），本文 5.2/5.4 改为摘要概览
 - 变更记录：v1.1 吸收 meditation-guide-studio（`C:\projects\apps\meditation-guide-studio`）已验证实现——TTS 双引擎接入代码移植、情绪 instruction 映射定论、SSML break/静音切分双策略、音频落盘原子化规范、run 进度持久化、MiniMax 同步接口修正（E1）与计费安全重试（E8）、48kHz 基准（E2）、呼吸停顿 4s/5s（E4）
-- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T014`（任务拆分）
+- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T015`（任务拆分）
 - 技术栈基准：`article-studio/docs/tech/tech-design.md`
 - 交互基准：`prototype/`（已验收原型，前端功能语义来源）
 
@@ -208,12 +209,13 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 - **`app/llm/registry.py`**：ModelRegistry（数据驱动注册表）——三家均 OpenAI 兼容 chat/completions + SSE 流式，httpx 直连实现（不引入 LangChain 重依赖）：
   - DeepSeek（`deepseek-chat`，`api.deepseek.com/v1`）
   - 通义千问（`qwen-plus`，DashScope OpenAI 兼容模式）
-  - Kimi（`kimi-k2-0905-preview`，`api.moonshot.cn/v1`）
+  - Kimi（模型 ID 可配置，`api.moonshot.cn/v1`）：K2.5/K2.6 精确匹配后发送当前 `thinking` 设置；K2.7 Code 为强制思考但不发送可关闭配置；K3、Moonshot V1 与未知模型不发送 `thinking`。所有 Moonshot 请求均省略 `temperature`，DeepSeek/Qwen 维持 `0.8`。
   - 模型列表**仅返回已配置 Key 的可用项**（`FAKE_MODE` 返回全量），前端下拉只展示可用模型；发送时后端仍校验 `SCRIPT_LLM_NOT_CONFIGURED` 作兜底；`FAKE_MODE` 时返回内置示例脚本的伪流。
   - 三家实际模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 提供初始值，必须非空但允许跨 provider 重复；运行时覆盖保存后重建注册表，工作台下拉立即显示新模型 ID。历史消息/产物中的旧 ID 不迁移。
 - **`app/script/prompts.py`**：冥想专用 Prompt 模板——角色设定 + 标记规范（`[停顿 Ns]`/`[情绪:x]`/`[语速:x]`/`[吸气]`/`[呼气]`）+ 结构要求（引导进入→主体→收尾）+ 时长-篇幅映射（5/10/15/20/25/30min≈1200/2200/3200/4200/5100/6000 字，含停顿折算）。
 - **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`speech|pause|vocal`，含 `emotion/speed/seconds/tag` 等按类型字段）+ 预估时长（语速档 × 字数 + 停顿求和，vocal 权重为 0）。支持旧标签及语法合法的内部 `[emotion:name]` / `[vocal:name]`（无需仍存在于当前配置）；其他未知方括号标签按既有策略剔除，前端不重复实现解析。
-- **会话流**：POST messages → 同事务写用户消息与 `.md` / `.txt` 参考附件 → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 assistant message + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
+- **会话流**：POST messages → 同事务写用户消息与 `.md` / `.txt` 参考附件 → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 assistant message + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。Provider 流被解析为 reasoning/content/finish/usage/done 内部事件：reasoning 不展示、不持久化，但每个分片仍检查取消；只有收到 `[DONE]` 且 finish 正常才允许定稿，提前 EOF、`length` 或 `content_filter` 均丢弃内存中的部分正文。
+- **失败重试一致性**：`run.failed` 后立即使消息查询失效；点击重试时再强制读取服务端消息列表并选择最后一条 user 消息，避免新消息已入库而浏览器缓存仍旧时错误调用历史消息 retry URL。后端继续以 `MESSAGE_NOT_RETRYABLE` 拒绝真正的历史消息。
 - **编辑状态**：人工编辑不做防抖或定时持久化；“保存草稿”显式 PATCH，“完成编辑”在 dirty 时先保存成功再退出，“放弃修改”二次确认后恢复服务端草稿。右栏与全屏弹窗复用同一份 draft/dirty/selection/error 状态，关闭全屏不结束编辑。
 - **历史版本文档导出（T014）**：版本历史弹窗每次打开默认选中版本号最大的最新版本；预览区可冻结当前所选不可变版本并打开页面级导出弹窗。每次打开导出弹窗以浏览器本地时间生成 `{产物名}-vN-MMDD-HHmm` 标题，默认 Markdown、可切换 TXT；正文只读该版本 `content.text`，除统一文件末尾 LF 外不改写内部空白或脚本标签。保存优先使用 `showSaveFilePicker`，用户取消静默保留弹窗；能力不可用时使用临时 Blob URL 和 `<a download>` 回退并立即回收。该流程纯客户端执行，不写草稿、版本、缓存或服务端数据。
 - 多轮 refinement：历史消息全部入上下文（预算内截断），用户可自然语言微调。当前轮附件完整加入带不可信资料声明的 JSON 安全边界；历史正文优先占用 12000 字符预算，剩余预算按由近到远顺序加入历史附件并允许截断。
@@ -269,8 +271,8 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 ### 5.9 设置线设计
 
 - `SettingsStore` 是进程内配置单一入口：启动时合并默认值、`.env` 与 `DATA_DIR/settings.json`，优先级为运行时文件 > `.env` > 默认值；持久化采用同目录临时文件 + `os.replace` 原子替换。
-- `GET /api/settings/status`：返回配置 revision、各 provider 的 configured/掩码/来源及可编辑模型参数，同时返回 ffmpeg/ffprobe、FAKE_MODE 等只读环境状态；任何响应均不含完整凭据。
-- `PATCH /api/settings/providers/{provider}`：支持 `llm_deepseek|llm_qwen|llm_moonshot|tts_aliyun|tts_volc|minimax` 的凭据和模型参数更新；MiniMax 模型 ID 默认 `music-3.0`。密码字段未传表示保留，显式清除走独立 credentials 删除端点。
+- `GET /api/settings/status`：返回配置 revision、各 provider 的 configured/掩码/来源及可编辑模型参数，同时返回 ffmpeg/ffprobe、FAKE_MODE 等只读环境状态；Kimi 额外返回思考偏好、是否可配置及禁用原因；任何响应均不含完整凭据。
+- `PATCH /api/settings/providers/{provider}`：支持 `llm_deepseek|llm_qwen|llm_moonshot|tts_aliyun|tts_volc|minimax` 的凭据和模型参数更新；Moonshot 额外接受严格 boolean `thinking_enabled`（默认开启），MiniMax 模型 ID 默认 `music-3.0`。密码字段未传表示保留，显式清除走独立 credentials 删除端点。
 - `PATCH /api/settings/runtime`：更新 `llm_timeout_seconds`、`minimax_timeout_seconds`；其他本地环境参数不开放写入。
 - `GET/PATCH /api/settings/script-config`：读取或以 revision 原子替换情绪、语气词和停顿预设。情绪/语气词分别最多 20 项，保存英文模型名、中文显示名和启用状态；停顿最多 20 个、整数 1–300 秒。响应同时返回系统默认值，设置页可显式恢复默认。
 - `DELETE /api/settings/providers/{provider}/credentials`：删除浏览器运行时凭据覆盖；若 `.env` 有值则立即回退并在 status 中显示 `source=env`。
@@ -279,7 +281,7 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 - 设置页顶层使用“模型与环境设置 / 音色配置 / 脚本配置”三个 Tab。脚本配置管理可排序、启停的情绪/语气词标签和停顿预设；编辑器只允许插入这里已配置且启用的标签。
 - 写接口携带 revision 做乐观并发控制；校验并原子落盘成功后才替换内存快照。保存和真实连通测试分离，探测失败不回滚配置。
 - `POST /api/settings/probe/{provider}`：轻量真实探测——LLM（一次极短补全）、TTS（合成一句短音频即弃）、MiniMax（调用官方 `GET /v1/models`，不触发音乐生成计费）、ffmpeg（版本）。FAKE_MODE 不改变 probe 的真实探测语义。
-- 免重启生效边界：一般任务在开始执行时读取最新设置；TTS 的模型与音色在提交时冻结、执行时仅读取最新凭据，防止排队期间切换模型造成错配。LLM registry 和 BGM handler 不得永久捕获启动时配置。
+- 免重启生效边界：一般任务在开始执行时读取最新设置；Kimi 思考偏好同样在 script run 开始时快照，retry 是新 run 因而读取最新值。TTS 的模型与音色在提交时冻结、执行时仅读取最新凭据，防止排队期间切换模型造成错配。LLM registry 和 BGM handler 不得永久捕获启动时配置。
 - 安全边界为绑定 `127.0.0.1` 的本机可信用户：写接口执行同源/Origin 校验，不在本任务引入登录鉴权；若未来开放局域网或公网访问，必须先增加管理员认证。
 
 ### 5.10 环境配置
@@ -294,6 +296,7 @@ MOONSHOT_API_KEY=           # Kimi（api.moonshot.cn）
 DEEPSEEK_MODEL_ID=deepseek-chat
 DASHSCOPE_MODEL_ID=qwen-plus
 MOONSHOT_MODEL_ID=kimi-k2-0905-preview
+MOONSHOT_THINKING_ENABLED=true  # 仅 Kimi K2.5/K2.6 可配置
 
 # 阿里云 TTS（与通义千问 LLM 配置隔离，不做 DASHSCOPE_* 回退）
 ALIYUN_TTS_API_KEY=
@@ -435,6 +438,7 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | 移植代码与新架构（run 队列/SSE）水土不服 | Provider 层保持纯函数式（输入参数 → 音频 bytes/URL），与 run 框架解耦；契约测试锁定行为 |
 | FFmpeg 滤镜链（sidechaincompress/aloop）调参 | 契约测试锁参数拼装；实施期用固定样本音频人耳验收 ducking/循环/截断三态 |
 | SSE 经 Vite proxy 流式兼容 | dev proxy 与直连各验证一次（同 article-studio） |
+| Moonshot SSE 提前断开导致部分脚本误保存 | Provider 必须收到 `[DONE]` 并校验 finish_reason；失败仅保留内存临时态，不写 assistant/草稿 |
 | 长任务排队体验（单队列串行） | `run.status` 携带队列位置；前端全局运行态提示（首页/侧边栏可见进行中任务） |
 | 手工 TS 契约类型漂移 | 契约测试 + `types.ts` 锚定；后续可评估 openapi-typescript |
 | Windows 下 ffmpeg 未安装 | T006 提交前检查并返回 `MIX_FFMPEG_MISSING`；T007 启动/设置状态探测与安装指引。peaks 配置透传缺口见 ISSUE-003 |

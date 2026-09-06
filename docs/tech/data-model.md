@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.9
+- 版本：v2.0
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v2.0 增加 T015 user 消息 Provider 快照与 Kimi 成功脚本的有效思考模式快照；思考过程本身不持久化
 - 变更记录：v1.9 明确 T014 导出文件及本次导出标题不是持久化业务实体，不改变脚本产物、版本与草稿生命周期
 - 变更记录：v1.8 增加 T013 脚本情绪/语气词/停顿配置覆盖、`vocal` segment，并将人工草稿改为仅显式保存
 - 变更记录：v1.7 扩展 T012 mix 参数快照：人声/背景独立倍速及有效时长语义
@@ -70,8 +71,10 @@ CREATE INDEX idx_messages_conv ON messages(conversation_id, created_at ASC);
 `params_json`（user 消息）：
 
 ```json
-{ "duration": 15, "model": "deepseek-chat" }
+{ "duration": 15, "model": "kimi-k2.6", "provider": "moonshot" }
 ```
+
+`provider` 用于任务真正开始时解析该 Provider 的最新模型 ID；retry 复用同一 user 消息和附件，但重新读取运行时 Provider 设置。不会把思考过程写入消息正文或额外字段。
 
 ### 4.3 message_attachments（消息参考附件）
 
@@ -236,9 +239,12 @@ CREATE INDEX idx_tts_custom_voices_model
   "topic": "深海放松",           // 用户主题输入
   "matched_topic": "深海放松",   // 命中的预设主题（自由输入时同 topic）
   "duration": 15,               // 目标时长档位 5|10|15|20|25|30（分钟）
-  "model": "deepseek-chat"      // 最后一次生成的模型
+  "model": "kimi-k2.6",         // 最后一次生成时解析出的实际模型
+  "thinking_enabled": true       // 可选；Moonshot 可确定有效思考状态时记录
 }
 ```
+
+`thinking_enabled` 只记录成功生成任务开始时的有效设置，供结果回溯；不保存 `reasoning_content`。旧产物缺少该字段时保持兼容，不执行数据迁移。
 
 `content_json`：
 
@@ -331,7 +337,7 @@ DATA_DIR/
    └─ peaks/
 ```
 
-`settings.json` 不是业务数据表：保存 revision 与浏览器设置的字段级覆盖值，由 `SettingsStore` 整体校验后通过同目录临时文件 + `os.replace` 原子写入。读取优先级为运行时文件 > `.env` > 默认值。除 Provider/runtime 字段外，T013 增加 `script_emotion_tags`、`script_vocal_tags`、`script_pause_presets` 三个完整快照字段；标签项结构为 `{name,label,enabled}`，前两类各最多 20 项，停顿最多 20 个整数且每项 1–300 秒。状态 API 只返回掩码、来源和可回显字段名；脚本配置由独立无缓存端点读取。专用 reveal API 可按字段返回本文件中的浏览器凭据覆盖，但绝不读取或回退到 `.env`，响应禁止缓存。该文件属于本机敏感数据，生命周期随 `DATA_DIR`，备份和迁移时须按凭据文件处理。
+`settings.json` 不是业务数据表：保存 revision 与浏览器设置的字段级覆盖值，由 `SettingsStore` 整体校验后通过同目录临时文件 + `os.replace` 原子写入。读取优先级为运行时文件 > `.env` > 默认值。T015 增加可选 boolean `moonshot_thinking_enabled`（旧文件缺失时默认 `true`）；清除 Moonshot 凭据或切换模型不清除该偏好。除 Provider/runtime 字段外，T013 增加 `script_emotion_tags`、`script_vocal_tags`、`script_pause_presets` 三个完整快照字段；标签项结构为 `{name,label,enabled}`，前两类各最多 20 项，停顿最多 20 个整数且每项 1–300 秒。状态 API 只返回掩码、来源和可回显字段名；脚本配置由独立无缓存端点读取。专用 reveal API 可按字段返回本文件中的浏览器凭据覆盖，但绝不读取或回退到 `.env`，响应禁止缓存。该文件属于本机敏感数据，生命周期随 `DATA_DIR`，备份和迁移时须按凭据文件处理。
 
 ### 6.1 音频文件布局（DATA_DIR/audio/）
 
