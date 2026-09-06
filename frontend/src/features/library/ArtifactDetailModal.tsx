@@ -4,7 +4,7 @@ import { App, Button, Descriptions, List, Modal, Space, Tag } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { listArtifactVersions, restoreArtifactVersion } from '../../api/artifacts'
 import { getConversation } from '../../api/conversations'
-import type { Artifact } from '../../api/types'
+import type { Artifact, ScriptConfig } from '../../api/types'
 import AudioPlayer from '../../components/AudioPlayer'
 import WaveformView from '../../components/WaveformView'
 import ScriptView from '../script-workspace/ScriptView'
@@ -12,6 +12,7 @@ import { ARTIFACT_TYPE_META, artifactParamRows, formatArtifactTime, formatSecond
 
 interface ArtifactDetailModalProps {
   artifact: Artifact | null
+  scriptConfig?: ScriptConfig
   onClose: () => void
 }
 
@@ -22,7 +23,7 @@ function downstreamOf(artifact: Artifact): { path: string; label: string } | nul
   return null
 }
 
-export default function ArtifactDetailModal({ artifact, onClose }: ArtifactDetailModalProps) {
+export default function ArtifactDetailModal({ artifact, scriptConfig, onClose }: ArtifactDetailModalProps) {
   const navigate = useNavigate()
   const { message } = App.useApp()
   const queryClient = useQueryClient()
@@ -81,7 +82,7 @@ export default function ArtifactDetailModal({ artifact, onClose }: ArtifactDetai
             <Descriptions.Item key={label} label={label}>{value}</Descriptions.Item>
           ))}
         </Descriptions>
-        {isScript && artifact.content && <ScriptView content={artifact.content} />}
+        {isScript && artifact.content && <ScriptView content={artifact.content} scriptConfig={scriptConfig} />}
         {artifact.audio && (
           <div className="library-audio-detail">
             <WaveformView artifactId={artifact.id} />

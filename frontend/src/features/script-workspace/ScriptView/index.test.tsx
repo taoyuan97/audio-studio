@@ -109,6 +109,30 @@ describe('ScriptView 标记徽章与时间轴渲染', () => {
     expect(screen.getByText(/预估口播：约 0 秒/)).toBeInTheDocument()
   })
 
+  it('使用脚本配置显示英文情绪和语气词的中文名称', () => {
+    render(
+      <ScriptView
+        content={{
+          text: '[emotion:asmr]正文[vocal:sighing]',
+          est_duration: 2,
+          segments: [
+            { kind: 'speech', text: '正文', emotion: 'asmr', speed: null },
+            { kind: 'vocal', tag: 'sighing' },
+          ],
+        }}
+        scriptConfig={{
+          revision: 1,
+          emotion_tags: [{ name: 'asmr', label: '轻柔耳语', enabled: true }],
+          vocal_tags: [{ name: 'sighing', label: '叹息', enabled: true }],
+          pause_presets: [1],
+          defaults: { emotion_tags: [], vocal_tags: [], pause_presets: [] },
+        }}
+      />,
+    )
+    expect(screen.getByText('情绪·轻柔耳语')).toBeInTheDocument()
+    expect(screen.getByText('语气词·叹息')).toBeInTheDocument()
+  })
+
   it('正文字数统计去除空白字符', () => {
     render(
       <ScriptView

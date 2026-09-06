@@ -164,6 +164,7 @@ export type AudioFormat = 'mp3' | 'wav'
 export type ScriptSegment =
   | { kind: 'speech'; text: string; emotion: string | null; speed: string | null }
   | { kind: 'pause'; seconds: number }
+  | { kind: 'vocal'; tag: string }
 
 export interface ScriptContent {
   text: string
@@ -288,6 +289,7 @@ export interface TtsEngine {
   model: string
   supports_ssml: boolean
   supports_instruction: boolean
+  supports_inline_tags?: boolean
   max_ssml_pause_ms: number
   supports_pitch: boolean
   voices: TtsVoice[]
@@ -401,6 +403,24 @@ export interface SettingsStatus {
     ffprobe_available: boolean
   }
   fake_mode: boolean
+}
+
+export interface ScriptTagConfig {
+  name: string
+  label: string
+  enabled: boolean
+}
+
+export interface ScriptConfig {
+  revision: number
+  emotion_tags: ScriptTagConfig[]
+  vocal_tags: ScriptTagConfig[]
+  pause_presets: number[]
+  defaults: {
+    emotion_tags: ScriptTagConfig[]
+    vocal_tags: ScriptTagConfig[]
+    pause_presets: number[]
+  }
 }
 
 export interface ProviderUpdateResponse {

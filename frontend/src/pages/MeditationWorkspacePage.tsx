@@ -3,6 +3,7 @@ import {
   ArrowRightOutlined,
   CheckOutlined,
   EditOutlined,
+  FullscreenOutlined,
   HistoryOutlined,
   PlusOutlined,
   SaveOutlined,
@@ -12,6 +13,7 @@ import {
 import { App, Button, Input, List, Modal, Skeleton, Tag } from 'antd'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useOutletContext } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import {
   getConversation,
@@ -26,16 +28,20 @@ import { listArtifactVersions, restoreArtifactVersion } from '../api/artifacts'
 import { cancelRun } from '../api/runs'
 import type {
   ScriptContent,
+  ScriptConfig,
   ScriptDuration,
   ScriptVersion,
   SendMessageAttachment,
 } from '../api/types'
 import { useRunStream } from '../lib/sse'
 import { useUiStore } from '../stores/uiStore'
+import { getScriptConfig } from '../api/settings'
 import DurationSelect from '../components/DurationSelect'
 import ModelSelect from '../components/ModelSelect'
 import MessageList, { type RunFailure } from '../features/script-workspace/MessageList'
 import ScriptView from '../features/script-workspace/ScriptView'
+import ScriptEditor, { type SelectionRange } from '../features/script-workspace/ScriptEditor'
+import type { FocusLayoutContext } from '../layouts/FocusLayout'
 import {
   formatFileSize,
   mergeSelectedFiles,
@@ -61,6 +67,7 @@ export default function MeditationWorkspacePage() {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
   const pushBanner = useUiStore((state) => state.pushBanner)
+  const { setNavigationBlocked } = useOutletContext<FocusLayoutContext>()
 
   // ---------------- 数据查询 ----------------
 
@@ -78,6 +85,12 @@ export default function MeditationWorkspacePage() {
   const modelsQuery = useQuery({
     queryKey: ['models', conversationId],
     queryFn: () => listConversationModels(conversationId),
+    staleTime: 60_000,
+  })
+
+  const scriptConfigQuery = useQuery({
+    queryKey: ['script-config'],
+    queryFn: ({ signal }) => getScriptConfig(signal),
     staleTime: 60_000,
   })
 
@@ -302,13 +315,30 @@ export default function MeditationWorkspacePage() {
   const [scriptName, setScriptName] = useState('')
   const [versionsOpen, setVersionsOpen] = useState(false)
   const [selectedVersion, setSelectedVersion] = useState<ScriptVersion | null>(null)
-  const [failedDraftText, setFailedDraftText] = useState<string | null>(null)
+  const [editorDirty, setEditorDirty] = useState(false)
+  const [draftSaveFailed, setDraftSaveFailed] = useState(false)
+  const [selection, setSelection] = useState<SelectionRange>({ start: 0, end: 0 })
+
+  useEffect(() => {
+    setNavigationBlocked(editorDirty)
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!editorDirty) return
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => {
+      setNavigationBlocked(false)
+      window.removeEventListener('beforeunload', warnBeforeUnload)
+    }
+  }, [editorDirty, setNavigationBlocked])
 
   const editMutation = useMutation({
-    mutationFn: ({ text, revision }: { text: string; revision: number }) =>
+    mutationFn: ({ text, revision }: { text: string; revision: number; finish: boolean }) =>
       updateScriptDraft(conversationId, text, revision),
-    onSuccess: (updatedDraft) => {
-      setFailedDraftText(null)
+    onSuccess: (updatedDraft, variables) => {
+      setDraftSaveFailed(false)
+      setEditorDirty(false)
+      setDraft(updatedDraft.content.text)
       queryClient.setQueryData(
         ['conversation', conversationId],
         (current: typeof detailQuery.data) =>
@@ -317,29 +347,29 @@ export default function MeditationWorkspacePage() {
             : current,
       )
       queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
+      if (variables.finish) setEditing(false)
     },
-    onError: (error, variables) => {
-      setFailedDraftText(variables.text)
-      if (error instanceof ApiError) message.error(error.message)
-      else message.error('草稿自动保存失败')
+    onError: (error) => {
+      setDraftSaveFailed(true)
+      if (error instanceof ApiError) {
+        if (error.code === 'SCRIPT_DRAFT_REVISION_CONFLICT') {
+          queryClient.invalidateQueries({ queryKey: ['conversation', conversationId] })
+        }
+        message.error(error.message)
+      }
+      else message.error('草稿保存失败')
     },
   })
 
-  useEffect(() => {
-    if (
-      !editing ||
-      !scriptDraft ||
-      editMutation.isPending ||
-      draft === failedDraftText ||
-      draft === scriptDraft.content.text
-    ) {
+  const saveDraft = (finish: boolean) => {
+    if (!scriptDraft || editMutation.isPending) return
+    if (!editorDirty) {
+      if (finish) setEditing(false)
       return
     }
-    const timer = window.setTimeout(() => {
-      editMutation.mutate({ text: draft, revision: scriptDraft.revision })
-    }, 1000)
-    return () => window.clearTimeout(timer)
-  }, [draft, editing, scriptDraft, editMutation.isPending, failedDraftText]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!draft.trim()) return
+    editMutation.mutate({ text: draft, revision: scriptDraft.revision, finish })
+  }
 
   const saveVersionMutation = useMutation({
     mutationFn: (name?: string) =>
@@ -559,33 +589,39 @@ export default function MeditationWorkspacePage() {
             editing={editing}
             draft={draft}
             savingDraft={editMutation.isPending}
-            draftSaveFailed={failedDraftText === draft}
+            draftSaveFailed={draftSaveFailed}
+            editorDirty={editorDirty}
+            scriptConfig={scriptConfigQuery.data}
+            selection={selection}
             hasArtifact={Boolean(artifact)}
             hasUnsavedChanges={hasUnsavedChanges}
             currentVersionNo={artifact?.current_version_no ?? null}
             savingVersion={saveVersionMutation.isPending}
             onDraftChange={(value) => {
-              setFailedDraftText(null)
+              setDraftSaveFailed(false)
               setDraft(value)
+              setEditorDirty(value !== scriptDraft.content.text)
             }}
+            onSelectionChange={setSelection}
             onStartEdit={() => {
               setDraft(scriptDraft.content.text)
+              setSelection({ start: scriptDraft.content.text.length, end: scriptDraft.content.text.length })
+              setEditorDirty(false)
+              setDraftSaveFailed(false)
               setEditing(true)
             }}
-            onFinishEdit={() => {
-              if (
-                scriptDraft &&
-                draft.trim() &&
-                draft !== scriptDraft.content.text &&
-                !editMutation.isPending
-              ) {
-                editMutation.mutate(
-                  { text: draft, revision: scriptDraft.revision },
-                  { onSuccess: () => setEditing(false) },
-                )
-                return
-              }
+            onSaveDraft={() => saveDraft(false)}
+            onFinishEdit={() => saveDraft(true)}
+            onDiscardEdit={() => {
+              setDraft(scriptDraft.content.text)
+              setSelection({ start: scriptDraft.content.text.length, end: scriptDraft.content.text.length })
+              setEditorDirty(false)
+              setDraftSaveFailed(false)
               setEditing(false)
+            }}
+            onOpenScriptSettings={() => {
+              if (editorDirty && !window.confirm('草稿有未保存的本地修改，确定前往设置吗？')) return
+              navigate('/settings?tab=script')
             }}
             onSaveVersion={() => handleSaveVersion()}
             onSendToTts={() => artifact && navigate(`/tts?artifact_id=${artifact.id}`)}
@@ -717,7 +753,7 @@ export default function MeditationWorkspacePage() {
                     恢复为草稿
                   </Button>
                 </div>
-                <ScriptView content={selectedVersion.content} />
+                <ScriptView content={selectedVersion.content} scriptConfig={scriptConfigQuery.data} />
               </>
             ) : (
               <div className="version-empty">选择一个版本查看内容</div>
@@ -772,13 +808,20 @@ interface ScriptResultCardProps {
   draft: string
   savingDraft: boolean
   draftSaveFailed: boolean
+  editorDirty: boolean
+  scriptConfig?: ScriptConfig
+  selection: SelectionRange
   hasArtifact: boolean
   hasUnsavedChanges: boolean
   currentVersionNo: number | null
   savingVersion: boolean
   onDraftChange: (value: string) => void
+  onSelectionChange: (selection: SelectionRange) => void
   onStartEdit: () => void
+  onSaveDraft: () => void
   onFinishEdit: () => void
+  onDiscardEdit: () => void
+  onOpenScriptSettings: () => void
   onSaveVersion: () => void
   onSendToTts: () => void
   onOpenVersions: () => void
@@ -791,20 +834,80 @@ function ScriptResultCard({
   draft,
   savingDraft,
   draftSaveFailed,
+  editorDirty,
+  scriptConfig,
+  selection,
   hasArtifact,
   hasUnsavedChanges,
   currentVersionNo,
   savingVersion,
   onDraftChange,
+  onSelectionChange,
   onStartEdit,
+  onSaveDraft,
   onFinishEdit,
+  onDiscardEdit,
+  onOpenScriptSettings,
   onSaveVersion,
   onSendToTts,
   onOpenVersions,
 }: ScriptResultCardProps) {
+  const [fullscreenOpen, setFullscreenOpen] = useState(false)
+  const body = editing ? (
+    <ScriptEditor
+      value={draft}
+      dirty={editorDirty}
+      saving={savingDraft}
+      saveFailed={draftSaveFailed}
+      config={scriptConfig}
+      selection={selection}
+      onSelectionChange={onSelectionChange}
+      onChange={onDraftChange}
+      onSave={onSaveDraft}
+      onFinish={onFinishEdit}
+      onDiscard={onDiscardEdit}
+      onOpenSettings={onOpenScriptSettings}
+    />
+  ) : (
+    <>
+      <ScriptView content={content} scriptConfig={scriptConfig} />
+      <div className="btn-row">
+        <Button size="small" icon={<EditOutlined />} onClick={onStartEdit}>
+          编辑脚本
+        </Button>
+        <Button
+          size="small"
+          type="primary"
+          icon={<SaveOutlined />}
+          loading={savingVersion}
+          disabled={!hasUnsavedChanges || savingDraft}
+          onClick={onSaveVersion}
+        >
+          {hasArtifact ? '保存新版本' : '保存脚本'}
+        </Button>
+        <span style={{ flex: 1 }} />
+        <Button
+          size="small"
+          type="primary"
+          icon={<ArrowRightOutlined />}
+          title="送 TTS 合成（T004 任务入口）"
+          disabled={!hasArtifact || hasUnsavedChanges || savingDraft}
+          onClick={onSendToTts}
+        >
+          送去 TTS
+        </Button>
+      </div>
+      <div className="note">
+        {hasUnsavedChanges
+          ? '当前是未保存草稿；AI 生成和人工编辑不会覆盖已保存版本。'
+          : `当前草稿已保存为 v${currentVersionNo ?? 1}。`}
+      </div>
+    </>
+  )
   return (
-    <div className="script-result-card">
-      <div className="card-title-row">
+    <>
+      <div className="script-result-card">
+        <div className="card-title-row">
         <span className="card-title">生成结果</span>
         <Tag color="blue">冥想脚本</Tag>
         <span style={{ flex: 1 }} />
@@ -815,76 +918,26 @@ function ScriptResultCard({
         ) : (
           <Tag>未保存为脚本</Tag>
         )}
+        <Button size="small" type="text" icon={<FullscreenOutlined />} aria-label="全屏查看脚本" onClick={() => setFullscreenOpen(true)}>全屏</Button>
+        </div>
+        <div className="param-chips"><span className="param-chip">目标时长：{targetDuration} 分钟</span></div>
+        {!fullscreenOpen && body}
       </div>
-      <div className="param-chips">
-        <span className="param-chip">目标时长：{targetDuration} 分钟</span>
-      </div>
-
-      {editing ? (
-        <>
-          <Input.TextArea
-            className="script-edit"
-            value={draft}
-            rows={14}
-            maxLength={20000}
-            onChange={(event) => onDraftChange(event.target.value)}
-            placeholder="编辑脚本文本，支持标记：[停顿 5s] [情绪:温柔] [吸气] [呼气] [语速:慢速]"
-          />
-          <div className="field-hint">
-            {savingDraft
-              ? '草稿保存中…'
-              : draftSaveFailed
-                ? '草稿自动保存失败；修改内容或点击“完成编辑”重试。'
-                : '草稿已自动保存，但尚未保存为版本。'}
-          </div>
-          <div className="btn-row">
-            <Button
-              size="small"
-              type="primary"
-              disabled={!draft.trim() || savingDraft}
-              onClick={onFinishEdit}
-            >
-              完成编辑
-            </Button>
-          </div>
-        </>
-      ) : (
-        <>
-          <ScriptView content={content} />
-          <div className="btn-row">
-            <Button size="small" icon={<EditOutlined />} onClick={onStartEdit}>
-              编辑脚本
-            </Button>
-            <Button
-              size="small"
-              type="primary"
-              icon={<SaveOutlined />}
-              loading={savingVersion}
-              disabled={!hasUnsavedChanges || savingDraft}
-              onClick={onSaveVersion}
-            >
-              {hasArtifact ? '保存新版本' : '保存脚本'}
-            </Button>
-            <span style={{ flex: 1 }} />
-            <Button
-              size="small"
-              type="primary"
-              icon={<ArrowRightOutlined />}
-              title="送 TTS 合成（T004 任务入口）"
-              disabled={!hasArtifact || hasUnsavedChanges || savingDraft}
-              onClick={onSendToTts}
-            >
-              送去 TTS
-            </Button>
-          </div>
-          <div className="note">
-            {hasUnsavedChanges
-              ? '当前是未保存草稿；AI 生成和人工编辑不会覆盖已保存版本。'
-              : `当前草稿已保存为 v${currentVersionNo ?? 1}。`}
-          </div>
-        </>
-      )}
-    </div>
+      <Modal
+        className="script-fullscreen-modal"
+        title="生成结果 · 冥想脚本"
+        open={fullscreenOpen}
+        footer={null}
+        width="calc(100vw - 32px)"
+        onCancel={() => setFullscreenOpen(false)}
+        destroyOnHidden
+      >
+        <div className="workspace-grid script-fullscreen-workspace">
+          <div className="script-fullscreen-meta"><span className="param-chip">目标时长：{targetDuration} 分钟</span></div>
+          {fullscreenOpen && body}
+        </div>
+      </Modal>
+    </>
   )
 }
 

@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v1.7
+- 版本：v1.8
 - 状态：已确认（决策点 F2：完整定义）
 - 创建日期：2026-08-26
+- 变更记录：v1.8 增加 T013 脚本情绪/语气词/停顿配置覆盖、`vocal` segment，并将人工草稿改为仅显式保存
 - 变更记录：v1.7 扩展 T012 mix 参数快照：人声/背景独立倍速及有效时长语义
 - 变更记录：v1.6 增加 T011 `tts_custom_voices` 按模型持久化音色库、试听验证状态、模型感知缓存与删除生命周期
 - 变更记录：v1.5 明确仅 `settings.json` 中的浏览器凭据覆盖可按字段回显，`.env` 基线永不回显
@@ -171,7 +172,7 @@ CREATE TABLE script_drafts (
 );
 ```
 
-草稿自动持久化但不属于产物库；AI 生成成功后原子替换 generated 草稿，人工编辑与版本恢复分别标记 manual/restored。更新接口携带 `expected_revision`，不一致返回 409。
+草稿不属于产物库；AI 生成成功后原子替换 generated 草稿。人工输入先只存在前端内存，用户点击“保存草稿”或在 dirty 状态点击“完成编辑”后才写入 manual 草稿；版本恢复标记 restored。更新接口携带 `expected_revision`，不一致返回 409。关闭全屏不触发持久化，也不丢弃前端编辑状态。
 
 ### 4.7 artifact_versions（脚本不可变版本）
 
@@ -240,9 +241,10 @@ CREATE INDEX idx_tts_custom_voices_model
 
 ```json
 {
-  "text": "欢迎来到今天的放松练习 [情绪:温柔]\n[停顿 3s]\n...",
+  "text": "[emotion:asmr]欢迎来到今天的放松练习\n[vocal:sighing][停顿 3s]\n...",
   "segments": [                    // 后端 markers.py 解析结果（唯一事实源，前端不重复解析）
-    { "kind": "speech", "text": "欢迎来到今天的放松练习", "emotion": "温柔", "speed": null },
+    { "kind": "speech", "text": "欢迎来到今天的放松练习", "emotion": "asmr", "speed": null },
+    { "kind": "vocal", "tag": "sighing" },
     { "kind": "pause", "seconds": 3 },
     { "kind": "speech", "text": "请找一个舒适的位置坐下", "emotion": null, "speed": "慢速" }
   ],
@@ -250,7 +252,7 @@ CREATE INDEX idx_tts_custom_voices_model
 }
 ```
 
-> segments 元素：`kind ∈ {speech, pause}`；speech 可带 `emotion`（原标记值）、`speed`（原标记值）；pause 带折算后 `seconds`。`[吸气]`→`{kind:"pause", seconds:4}`、`[呼气]`→`{kind:"pause", seconds:5}`（E4）。
+> segments 元素：`kind ∈ {speech, pause, vocal}`；speech 可带 `emotion`（内部新标签保存规范化英文名，旧标签保留原值）、`speed`；pause 带折算后 `seconds`；vocal 带英文 `tag` 且预估时长权重为 0。`[吸气]`→`{kind:"pause", seconds:4}`、`[呼气]`→`{kind:"pause", seconds:5}`（E4）。
 
 ### 5.2 type = voice（人声干声）
 
@@ -326,7 +328,7 @@ DATA_DIR/
    └─ peaks/
 ```
 
-`settings.json` 不是业务数据表：保存 revision 与浏览器设置的字段级覆盖值，由 `SettingsStore` 整体校验后通过同目录临时文件 + `os.replace` 原子写入。读取优先级为运行时文件 > `.env` > 默认值。状态 API 只返回掩码、来源和可回显字段名；专用 reveal API 可按字段返回本文件中的浏览器凭据覆盖，但绝不读取或回退到 `.env`，响应禁止缓存。该文件属于本机敏感数据，生命周期随 `DATA_DIR`，备份和迁移时须按凭据文件处理。
+`settings.json` 不是业务数据表：保存 revision 与浏览器设置的字段级覆盖值，由 `SettingsStore` 整体校验后通过同目录临时文件 + `os.replace` 原子写入。读取优先级为运行时文件 > `.env` > 默认值。除 Provider/runtime 字段外，T013 增加 `script_emotion_tags`、`script_vocal_tags`、`script_pause_presets` 三个完整快照字段；标签项结构为 `{name,label,enabled}`，前两类各最多 20 项，停顿最多 20 个整数且每项 1–300 秒。状态 API 只返回掩码、来源和可回显字段名；脚本配置由独立无缓存端点读取。专用 reveal API 可按字段返回本文件中的浏览器凭据覆盖，但绝不读取或回退到 `.env`，响应禁止缓存。该文件属于本机敏感数据，生命周期随 `DATA_DIR`，备份和迁移时须按凭据文件处理。
 
 ### 6.1 音频文件布局（DATA_DIR/audio/）
 

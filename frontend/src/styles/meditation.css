@@ -593,6 +593,11 @@
   background: var(--border);
 }
 
+.workspace-grid .tl-vocal {
+  min-width: 3px;
+  background: var(--teal);
+}
+
 .workspace-grid .timeline-legend {
   display: flex;
   align-items: center;
@@ -664,6 +669,12 @@
   border-color: color-mix(in srgb, var(--blue) 36%, transparent);
 }
 
+.workspace-grid .mb-vocal {
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  border-color: color-mix(in srgb, var(--teal) 36%, transparent);
+}
+
 .workspace-grid .sv-pause {
   color: var(--text-2);
   background: var(--panel-2);
@@ -671,8 +682,116 @@
 }
 
 .workspace-grid .script-edit.ant-input {
+  min-height: 360px;
   line-height: 1.9;
   background: var(--bg-soft);
+}
+
+.workspace-grid .script-marker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.workspace-grid .script-draft-status {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.workspace-grid .script-draft-status.error {
+  color: var(--red);
+}
+
+.script-marker-panel {
+  width: min(380px, calc(100vw - 48px));
+}
+
+.script-marker-panel > strong {
+  display: block;
+  margin: 4px 0 8px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.script-marker-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.script-marker-options .ant-btn {
+  height: auto;
+  padding-block: 4px;
+}
+
+.script-marker-options .ant-btn small {
+  display: block;
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.script-marker-options.pause-options .ant-btn {
+  min-width: 48px;
+}
+
+.custom-pause-row {
+  display: flex;
+  gap: 8px;
+}
+
+.script-marker-empty {
+  display: flex;
+  align-items: center;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.script-fullscreen-modal {
+  top: 16px;
+  max-width: none;
+  padding-bottom: 16px;
+}
+
+.script-fullscreen-modal .ant-modal-content {
+  display: flex;
+  height: calc(100vh - 32px);
+  flex-direction: column;
+}
+
+.script-fullscreen-modal .ant-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.script-fullscreen-modal .script-fullscreen-workspace {
+  display: block;
+  height: 100%;
+}
+
+.script-fullscreen-modal .script-fullscreen-meta {
+  margin-bottom: 12px;
+}
+
+.script-fullscreen-modal .script-view {
+  max-height: calc(100vh - 265px);
+}
+
+.script-fullscreen-modal .script-editor {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.script-fullscreen-modal .script-edit.ant-input {
+  flex: 1;
+  min-height: 0;
+  resize: none;
 }
 
 .workspace-grid .field-hint {
@@ -855,6 +974,16 @@
 
   .workspace-grid .script-view {
     padding: 14px;
+  }
+
+  .workspace-grid .script-marker-toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .workspace-grid .script-draft-status {
+    flex-basis: 100%;
+    margin-left: 0;
   }
 
   .version-history-layout {

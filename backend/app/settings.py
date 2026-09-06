@@ -9,7 +9,14 @@ import httpx
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from .config import SettingsRevisionConflictError, SettingsStore
+from .config import (
+    DEFAULT_SCRIPT_EMOTION_TAGS,
+    DEFAULT_SCRIPT_PAUSE_PRESETS,
+    DEFAULT_SCRIPT_VOCAL_TAGS,
+    ScriptTagConfig,
+    SettingsRevisionConflictError,
+    SettingsStore,
+)
 from .errors import ApiError, invalid
 from .ffmpeg import ffmpeg_version, find_ffprobe
 from .llm.registry import ModelRegistry
@@ -60,6 +67,15 @@ class RuntimeUpdate(BaseModel):
     revision: int = Field(ge=0)
     llm_timeout_seconds: int | None = Field(default=None, ge=1, le=600)
     minimax_timeout_seconds: int | None = Field(default=None, ge=30, le=1200)
+
+
+class ScriptConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    revision: int = Field(ge=0)
+    emotion_tags: list[ScriptTagConfig] = Field(max_length=20)
+    vocal_tags: list[ScriptTagConfig] = Field(max_length=20)
+    pause_presets: list[int] = Field(max_length=20)
 
 
 def _store(request: Request) -> SettingsStore:
@@ -143,6 +159,21 @@ def status_payload(store: SettingsStore) -> dict:
     }
 
 
+def script_config_payload(store: SettingsStore) -> dict:
+    settings = store.current
+    return {
+        "revision": store.revision,
+        "emotion_tags": [item.model_dump() for item in settings.script_emotion_tags],
+        "vocal_tags": [item.model_dump() for item in settings.script_vocal_tags],
+        "pause_presets": list(settings.script_pause_presets),
+        "defaults": {
+            "emotion_tags": list(DEFAULT_SCRIPT_EMOTION_TAGS),
+            "vocal_tags": list(DEFAULT_SCRIPT_VOCAL_TAGS),
+            "pause_presets": list(DEFAULT_SCRIPT_PAUSE_PRESETS),
+        },
+    }
+
+
 def _sync_runtime(request: Request) -> None:
     current = _store(request).current
     # 兼容既有只读引用；业务路由和 handler 均应优先读取 SettingsStore。
@@ -164,6 +195,12 @@ def _commit_error(exc: Exception) -> ApiError:
 def get_status(request: Request, response: Response):
     response.headers["Cache-Control"] = "no-store"
     return status_payload(_store(request))
+
+
+@router.get("/script-config")
+def get_script_config(request: Request, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return script_config_payload(_store(request))
 
 
 @router.post("/providers/{provider}/credentials/reveal")
@@ -243,6 +280,22 @@ def update_runtime(payload: RuntimeUpdate, request: Request):
             "minimax_timeout_seconds": settings.minimax_timeout_seconds,
         },
     }
+
+
+@router.patch("/script-config")
+def update_script_config(payload: ScriptConfigUpdate, request: Request):
+    require_local_origin(request)
+    values = {
+        "script_emotion_tags": [item.model_dump() for item in payload.emotion_tags],
+        "script_vocal_tags": [item.model_dump() for item in payload.vocal_tags],
+        "script_pause_presets": payload.pause_presets,
+    }
+    try:
+        _store(request).update_script_config(values, expected_revision=payload.revision)
+    except Exception as exc:
+        raise _commit_error(exc) from None
+    _sync_runtime(request)
+    return script_config_payload(_store(request))
 
 
 async def _probe_llm(provider: str, request: Request) -> str:

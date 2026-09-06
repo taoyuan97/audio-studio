@@ -9,8 +9,65 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_SCRIPT_EMOTION_TAGS = (
+    {"name": "asmr", "label": "轻柔耳语", "enabled": True},
+    {"name": "empathetic", "label": "共情", "enabled": True},
+    {"name": "whispers", "label": "耳语", "enabled": True},
+    {"name": "serious", "label": "严肃", "enabled": True},
+    {"name": "very slowly", "label": "非常缓慢", "enabled": True},
+    {"name": "curious", "label": "好奇", "enabled": True},
+    {"name": "tired", "label": "疲惫", "enabled": True},
+)
+DEFAULT_SCRIPT_VOCAL_TAGS = (
+    {"name": "gasp", "label": "倒吸一口气", "enabled": True},
+    {"name": "sighing", "label": "叹息", "enabled": True},
+    {"name": "clears throat", "label": "清嗓", "enabled": True},
+    {"name": "giggles", "label": "咯咯笑", "enabled": True},
+    {"name": "laughing", "label": "大笑", "enabled": True},
+    {"name": "cough", "label": "咳嗽", "enabled": True},
+    {"name": "snorts", "label": "哼声、嗤笑", "enabled": True},
+)
+DEFAULT_SCRIPT_PAUSE_PRESETS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 60)
+
+
+class ScriptTagConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9 -]*$")
+    label: str = Field(min_length=1, max_length=20)
+    enabled: bool = True
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value: object) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def normalize_label(cls, value: object) -> str:
+        label = str(value or "").strip()
+        if any(character in label for character in "[]") or any(ord(character) < 32 for character in label):
+            raise ValueError("中文显示名不能包含方括号或控制字符")
+        return label
+
+
+def _validate_tag_collection(value: object, *, category: str) -> tuple[ScriptTagConfig, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{category}标签必须是数组")
+    if len(value) > 20:
+        raise ValueError(f"{category}标签最多 20 个")
+    items = tuple(item if isinstance(item, ScriptTagConfig) else ScriptTagConfig.model_validate(item) for item in value)
+    names = [item.name.casefold() for item in items]
+    labels = [item.label.casefold() for item in items]
+    if len(names) != len(set(names)):
+        raise ValueError(f"{category}标签英文名不能重复")
+    if len(labels) != len(set(labels)):
+        raise ValueError(f"{category}标签中文显示名不能重复")
+    return items
 
 
 class Settings(BaseSettings):
@@ -49,6 +106,15 @@ class Settings(BaseSettings):
     # LLM 超时
     llm_timeout_seconds: int = Field(default=120, ge=1, le=600)
 
+    # 冥想脚本快捷标签（运行时可在设置页编辑）
+    script_emotion_tags: tuple[ScriptTagConfig, ...] = Field(
+        default_factory=lambda: tuple(ScriptTagConfig.model_validate(item) for item in DEFAULT_SCRIPT_EMOTION_TAGS)
+    )
+    script_vocal_tags: tuple[ScriptTagConfig, ...] = Field(
+        default_factory=lambda: tuple(ScriptTagConfig.model_validate(item) for item in DEFAULT_SCRIPT_VOCAL_TAGS)
+    )
+    script_pause_presets: tuple[int, ...] = DEFAULT_SCRIPT_PAUSE_PRESETS
+
     @field_validator(
         "deepseek_model_id",
         "dashscope_model_id",
@@ -63,6 +129,30 @@ class Settings(BaseSettings):
         if not model_id:
             raise ValueError(f"{info.field_name.upper()} 不能为空")
         return model_id
+
+    @field_validator("script_emotion_tags", mode="before")
+    @classmethod
+    def validate_script_emotion_tags(cls, value: object) -> tuple[ScriptTagConfig, ...]:
+        return _validate_tag_collection(value, category="情绪")
+
+    @field_validator("script_vocal_tags", mode="before")
+    @classmethod
+    def validate_script_vocal_tags(cls, value: object) -> tuple[ScriptTagConfig, ...]:
+        return _validate_tag_collection(value, category="语气词")
+
+    @field_validator("script_pause_presets", mode="before")
+    @classmethod
+    def validate_script_pause_presets(cls, value: object) -> tuple[int, ...]:
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("停顿预设必须是数组")
+        if len(value) > 20:
+            raise ValueError("停顿预设最多 20 个")
+        if any(isinstance(item, bool) or not isinstance(item, int) or not 1 <= item <= 300 for item in value):
+            raise ValueError("停顿预设必须是 1～300 的整数")
+        items = tuple(value)
+        if len(items) != len(set(items)):
+            raise ValueError("停顿预设不能重复")
+        return items
 
 @lru_cache
 def cached_settings() -> Settings:
@@ -93,6 +183,7 @@ class SettingsStore:
         "minimax": ("minimax_api_key",),
     }
     RUNTIME_FIELDS = ("llm_timeout_seconds", "minimax_timeout_seconds")
+    SCRIPT_FIELDS = ("script_emotion_tags", "script_vocal_tags", "script_pause_presets")
 
     def __init__(self, base: Settings, path: Path):
         self.path = Path(path)
@@ -159,6 +250,14 @@ class SettingsStore:
             raise ValueError("运行参数字段非法或为空")
         return self._commit(values, expected_revision=expected_revision)
 
+    def update_script_config(
+        self, values: dict[str, Any], *, expected_revision: int
+    ) -> Settings:
+        unknown = set(values) - set(self.SCRIPT_FIELDS)
+        if unknown or set(values) != set(self.SCRIPT_FIELDS):
+            raise ValueError("脚本配置必须包含情绪、语气词和停顿三类完整配置")
+        return self._commit(values, expected_revision=expected_revision)
+
     def clear_credentials(self, provider: str, *, expected_revision: int) -> Settings:
         fields = self.CREDENTIAL_FIELDS.get(provider)
         if fields is None:
@@ -220,7 +319,7 @@ class SettingsStore:
             field
             for fields in self.PROVIDER_FIELDS.values()
             for field in fields
-        } | set(self.RUNTIME_FIELDS)
+        } | set(self.RUNTIME_FIELDS) | set(self.SCRIPT_FIELDS)
         # 未知字段一律拒绝，避免静默误配置。
         if unknown := set(overrides) - allowed:
             raise ValueError(f"settings.json 包含不支持字段: {', '.join(sorted(unknown))}")

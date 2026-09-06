@@ -23,6 +23,55 @@ def test_status_is_masked_and_exposes_runtime(client: TestClient):
     assert "deepseek_api_key" not in serialized
 
 
+def test_script_config_defaults_and_persistence(app, client: TestClient):
+    current = client.get("/api/settings/script-config")
+    assert current.status_code == 200
+    assert current.headers["cache-control"] == "no-store"
+    body = current.json()
+    assert [item["name"] for item in body["emotion_tags"]] == [
+        "asmr", "empathetic", "whispers", "serious", "very slowly", "curious", "tired"
+    ]
+    assert len(body["vocal_tags"]) == 7
+    assert body["pause_presets"] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 60]
+
+    updated = client.patch(
+        "/api/settings/script-config",
+        json={
+            "revision": 0,
+            "emotion_tags": [{"name": " Calm-1 ", "label": " 平静 ", "enabled": True}],
+            "vocal_tags": [],
+            "pause_presets": [1, 300],
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["emotion_tags"] == [{"name": "calm-1", "label": "平静", "enabled": True}]
+    assert app.state.settings_store.current.script_pause_presets == (1, 300)
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"emotion_tags": [{"name": "asmr", "label": "耳语"}] * 21},
+        {"emotion_tags": [{"name": "bad[tag", "label": "错误"}]},
+        {"pause_presets": [0]},
+        {"pause_presets": [1.5]},
+        {"pause_presets": [301]},
+        {"pause_presets": [1, 1]},
+    ],
+)
+def test_script_config_rejects_invalid_values(client: TestClient, patch: dict):
+    payload = {
+        "revision": 0,
+        "emotion_tags": [],
+        "vocal_tags": [],
+        "pause_presets": [],
+        **patch,
+    }
+    response = client.patch("/api/settings/script-config", json=payload)
+    assert response.status_code == 422
+    assert client.get("/api/settings/script-config").json()["revision"] == 0
+
+
 def test_reveal_only_returns_browser_saved_credential(app, client: TestClient):
     app.state.settings_store._base.deepseek_api_key = "env-secret"
     env_only = client.post(

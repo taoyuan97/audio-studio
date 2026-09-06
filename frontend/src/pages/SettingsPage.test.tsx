@@ -7,7 +7,7 @@ import { ApiError } from '../api/client'
 import SettingsPage from './SettingsPage'
 
 const mocks = vi.hoisted(() => ({
-  status: vi.fn(), probe: vi.fn(), reveal: vi.fn(), update: vi.fn(), clear: vi.fn(), runtime: vi.fn(),
+  status: vi.fn(), probe: vi.fn(), reveal: vi.fn(), update: vi.fn(), clear: vi.fn(), runtime: vi.fn(), scriptConfig: vi.fn(), updateScript: vi.fn(),
   listVoices: vi.fn(), createVoice: vi.fn(), renameVoice: vi.fn(), deleteVoice: vi.fn(), verifyVoice: vi.fn(),
 }))
 vi.mock('../api/settings', () => ({
@@ -17,6 +17,8 @@ vi.mock('../api/settings', () => ({
   updateProvider: mocks.update,
   clearProviderCredentials: mocks.clear,
   updateRuntime: mocks.runtime,
+  getScriptConfig: mocks.scriptConfig,
+  updateScriptConfig: mocks.updateScript,
 }))
 vi.mock('../api/tts', () => ({
   listTtsCustomVoices: mocks.listVoices,
@@ -66,6 +68,18 @@ describe('SettingsPage', () => {
     mocks.update.mockResolvedValue({ revision: 3 })
     mocks.clear.mockResolvedValue({ revision: 3 })
     mocks.runtime.mockResolvedValue({ revision: 3 })
+    mocks.scriptConfig.mockResolvedValue({
+      revision: 2,
+      emotion_tags: [{ name: 'asmr', label: '轻柔耳语', enabled: true }],
+      vocal_tags: [{ name: 'sighing', label: '叹息', enabled: true }],
+      pause_presets: [1, 5, 60],
+      defaults: {
+        emotion_tags: [{ name: 'asmr', label: '轻柔耳语', enabled: true }],
+        vocal_tags: [{ name: 'sighing', label: '叹息', enabled: true }],
+        pause_presets: [1, 5, 60],
+      },
+    })
+    mocks.updateScript.mockImplementation((payload) => Promise.resolve({ ...payload, defaults: { emotion_tags: [], vocal_tags: [], pause_presets: [] } }))
     mocks.probe.mockResolvedValue({ ok: true, latency_ms: 12, message: '连接成功' })
     mocks.listVoices.mockResolvedValue({ items: [] })
     mocks.createVoice.mockResolvedValue({ id: 'cvoice_1' })
@@ -231,6 +245,23 @@ describe('SettingsPage', () => {
       voice_id: 'custom-voice-01',
       name: '温柔女声',
     })
+  })
+
+  it('edits and saves script tag configuration', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('tab', { name: '脚本配置' }))
+    expect(window.location.search).toBe('?tab=script')
+    const label = await screen.findByLabelText('情绪中文名 1')
+    await user.clear(label)
+    await user.type(label, 'ASMR 耳语')
+    await user.click(screen.getByRole('button', { name: '保存脚本配置' }))
+    await waitFor(() => expect(mocks.updateScript).toHaveBeenCalledWith({
+      revision: 2,
+      emotion_tags: [{ name: 'asmr', label: 'ASMR 耳语', enabled: true }],
+      vocal_tags: [{ name: 'sighing', label: '叹息', enabled: true }],
+      pause_presets: [1, 5, 60],
+    }))
   })
 
   it('offers to complete a plus basic voice suffix before saving', async () => {

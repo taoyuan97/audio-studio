@@ -57,6 +57,20 @@ class TestSegmentParsing:
         assert speeches[0]["emotion"] == "温柔"
         assert speeches[1]["emotion"] == "平静"
 
+    def test_native_emotion_and_vocal_markers(self):
+        parsed = parse_script("开头 [emotion:ASMR] 轻声 [vocal:sighing] 继续")
+        assert parsed.segments == [
+            {"kind": "speech", "text": "开头", "emotion": None, "speed": None},
+            {"kind": "speech", "text": "轻声", "emotion": "asmr", "speed": None},
+            {"kind": "vocal", "tag": "sighing"},
+            {"kind": "speech", "text": "继续", "emotion": "asmr", "speed": None},
+        ]
+
+    def test_unconfigured_native_marker_is_preserved(self):
+        parsed = parse_script("[emotion:custom calm] 正文 [vocal:soft-breath]")
+        assert parsed.segments[0]["emotion"] == "custom calm"
+        assert parsed.segments[1] == {"kind": "vocal", "tag": "soft-breath"}
+
     def test_full_combination(self):
         text = (
             "欢迎 [情绪:温柔] [语速:慢速] 请闭眼 [停顿 4s] "

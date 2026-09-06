@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { ScriptContent, ScriptSegment } from '../../../api/types'
+import type { ScriptConfig, ScriptContent, ScriptSegment } from '../../../api/types'
 import { formatEstDuration } from './format'
 
 /**
@@ -20,6 +20,7 @@ const SYLLABLE_SECONDS = 0.33
 
 function segmentWeight(segment: ScriptSegment): number {
   if (segment.kind === 'pause') return segment.seconds
+  if (segment.kind === 'vocal') return 0
   const chars = segment.text.replace(/\s/g, '').length
   const factor = SPEED_DISPLAY_FACTORS[segment.speed ?? ''] ?? 1
   return (chars * SYLLABLE_SECONDS) / factor
@@ -27,6 +28,7 @@ function segmentWeight(segment: ScriptSegment): number {
 
 function segmentTooltip(segment: ScriptSegment): string {
   if (segment.kind === 'pause') return `停顿 ${segment.seconds}s`
+  if (segment.kind === 'vocal') return `语气词：${segment.tag}`
   const labels = [segment.emotion ? `情绪：${segment.emotion}` : null, segment.speed ? `语速：${segment.speed}` : null]
   const meta = labels.filter(Boolean).join(' · ')
   const preview = segment.text.length > 16 ? `${segment.text.slice(0, 16)}…` : segment.text
@@ -42,13 +44,22 @@ function countScriptChars(content: ScriptContent): number {
 
 interface ScriptViewProps {
   content: ScriptContent
+  scriptConfig?: ScriptConfig
 }
 
-export default function ScriptView({ content }: ScriptViewProps) {
+export default function ScriptView({ content, scriptConfig }: ScriptViewProps) {
   const weights = useMemo(() => content.segments.map(segmentWeight), [content.segments])
   const totalWeight = useMemo(() => weights.reduce((a, b) => a + b, 0), [weights])
 
   const wordCount = useMemo(() => countScriptChars(content), [content])
+  const emotionLabels = useMemo(
+    () => new Map(scriptConfig?.emotion_tags.map((item) => [item.name, item.label]) ?? []),
+    [scriptConfig],
+  )
+  const vocalLabels = useMemo(
+    () => new Map(scriptConfig?.vocal_tags.map((item) => [item.name, item.label]) ?? []),
+    [scriptConfig],
+  )
 
   return (
     <div className="script-result">
@@ -63,7 +74,7 @@ export default function ScriptView({ content }: ScriptViewProps) {
             totalWeight > 0 ? (
               <div
                 key={index}
-                className={`tl-seg ${segment.kind === 'speech' ? 'tl-speech' : 'tl-pause'}`}
+                className={`tl-seg ${segment.kind === 'speech' ? 'tl-speech' : segment.kind === 'pause' ? 'tl-pause' : 'tl-vocal'}`}
                 style={{ width: `${((weights[index] / totalWeight) * 100).toFixed(2)}%` }}
                 title={segmentTooltip(segment)}
               />
@@ -87,13 +98,17 @@ export default function ScriptView({ content }: ScriptViewProps) {
         {content.segments.map((segment, index) =>
           segment.kind === 'speech' ? (
             <span key={index} className="sv-speech">
-              {segment.emotion && <span className="marker-badge mb-emotion">情绪·{segment.emotion}</span>}
+              {segment.emotion && <span className="marker-badge mb-emotion">情绪·{emotionLabels.get(segment.emotion) ?? segment.emotion}</span>}
               {segment.speed && <span className="marker-badge mb-speed">语速·{segment.speed}</span>}
               {segment.text}
             </span>
-          ) : (
+          ) : segment.kind === 'pause' ? (
             <span key={index} className="sv-pause" title={`停顿 ${segment.seconds} 秒`}>
               停顿 {segment.seconds}s
+            </span>
+          ) : (
+            <span key={index} className="marker-badge mb-vocal" title={`语气词：${segment.tag}`}>
+              语气词·{vocalLabels.get(segment.tag) ?? segment.tag}
             </span>
           ),
         )}

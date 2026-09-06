@@ -1,7 +1,8 @@
 """标记解析器（唯一事实源）：text → {segments[], est_duration}。
 
 - 结构见 data-model.md 5.1；前端只渲染 segments，不重复实现解析。
-- 标记规范：`[停顿 Ns]` / `[情绪:x]` / `[语速:x]` / `[吸气]` / `[呼气]`。
+- 标记规范：`[停顿 Ns]` / `[情绪:x]` / `[emotion:name]` /
+  `[vocal:name]` / `[语速:x]` / `[吸气]` / `[呼气]`。
 - `[吸气]` → pause 4s、`[呼气]` → pause 5s（决策 E4）。
 - 情绪/语速为"状态标记"：出现后对后续 speech 持续生效，直至再次出现。
 - 非法标记（无法识别的 `[…]`）容错：从 segments 中剔除，不中断解析。
@@ -24,6 +25,8 @@ BREATH_SECONDS = {"吸气": 4.0, "呼气": 5.0}
 _MARKER_RE = re.compile(r"\[([^\]]*)\]")
 _PAUSE_RE = re.compile(r"^停顿\s*(\d+(?:\.\d+)?)\s*s$", re.IGNORECASE)
 _EMOTION_RE = re.compile(r"^情绪[:：]\s*(.+)$")
+_NATIVE_EMOTION_RE = re.compile(r"^emotion:\s*([A-Za-z][A-Za-z0-9 -]*)$", re.IGNORECASE)
+_VOCAL_RE = re.compile(r"^vocal:\s*([A-Za-z][A-Za-z0-9 -]*)$", re.IGNORECASE)
 _SPEED_RE = re.compile(r"^语速[:：]\s*(.+)$")
 
 # 非法标记剔除后 speech 文本里不应残留的空白
@@ -51,6 +54,8 @@ def _speed_factor(speed: str | None) -> float:
 def _segment_seconds(segment: dict[str, Any]) -> float:
     if segment["kind"] == "pause":
         return float(segment["seconds"])
+    if segment["kind"] == "vocal":
+        return 0.0
     syllables = _count_syllables(segment["text"])
     return syllables * SYLLABLE_SECONDS / _speed_factor(segment.get("speed"))
 
@@ -90,6 +95,19 @@ def parse_script(text: str) -> ParsedScript:
             continue
         if tag in BREATH_SECONDS:
             segments.append({"kind": "pause", "seconds": BREATH_SECONDS[tag]})
+            continue
+        native_emotion_match = _NATIVE_EMOTION_RE.match(tag)
+        if native_emotion_match:
+            emotion = " ".join(native_emotion_match.group(1).lower().split())
+            continue
+        vocal_match = _VOCAL_RE.match(tag)
+        if vocal_match:
+            segments.append(
+                {
+                    "kind": "vocal",
+                    "tag": " ".join(vocal_match.group(1).lower().split()),
+                }
+            )
             continue
         emotion_match = _EMOTION_RE.match(tag)
         if emotion_match:

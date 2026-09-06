@@ -20,6 +20,7 @@ import {
 import { ApiError } from '../api/client'
 import type { ProviderStatus, SettingsProviderId, SettingsStatus } from '../api/types'
 import CustomVoiceSettings from '../features/tts/CustomVoiceSettings'
+import ScriptConfigSettings from '../features/settings/ScriptConfigSettings'
 
 const PROVIDERS: Array<{ id: SettingsProviderId; title: string; kind: string; model?: boolean }> = [
   { id: 'llm_deepseek', title: 'DeepSeek', kind: 'LLM', model: true },
@@ -273,9 +274,11 @@ function RuntimeCard({ status }: { status: SettingsStatus }) {
 
 export default function SettingsPage() {
   const { message } = App.useApp()
-  const [activeTab, setActiveTab] = useState<'environment' | 'voices'>(() =>
-    new URLSearchParams(window.location.search).get('tab') === 'voices' ? 'voices' : 'environment',
-  )
+  const [activeTab, setActiveTab] = useState<'environment' | 'voices' | 'script'>(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab')
+    return tab === 'voices' || tab === 'script' ? tab : 'environment'
+  })
+  const [scriptConfigDirty, setScriptConfigDirty] = useState(false)
   const query = useQuery({ queryKey: ['settings-status'], queryFn: ({ signal }) => getSettingsStatus(signal) })
   const ffmpegProbe = useMutation({
     mutationFn: () => probeProvider('ffmpeg'),
@@ -286,16 +289,17 @@ export default function SettingsPage() {
   if (!query.data) return <Alert type="error" showIcon message="设置加载失败" action={<Button onClick={() => query.refetch()}>重试</Button>} />
   const status = query.data
   const changeTab = (key: string) => {
-    const next = key === 'voices' ? 'voices' : 'environment'
+    const next = key === 'voices' || key === 'script' ? key : 'environment'
+    if (activeTab === 'script' && next !== 'script' && scriptConfigDirty && !window.confirm('脚本配置尚未保存，确定离开吗？')) return
     setActiveTab(next)
     const url = new URL(window.location.href)
-    if (next === 'voices') url.searchParams.set('tab', 'voices')
+    if (next !== 'environment') url.searchParams.set('tab', next)
     else url.searchParams.delete('tab')
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
   }
   return (
     <div className="page-stack settings-page">
-      <div className="page-head"><div><h2 className="page-title">设置</h2><p className="page-desc">管理模型、运行环境与阿里云 TTS 自定义音色。</p></div><Tag>配置版本 {status.revision}</Tag></div>
+      <div className="page-head"><div><h2 className="page-title">设置</h2><p className="page-desc">管理模型、运行环境、脚本标签与阿里云 TTS 自定义音色。</p></div><Tag>配置版本 {status.revision}</Tag></div>
       <Alert type="warning" showIcon message="仅限本机可信用户" description="设置写入未提供登录鉴权，请保持服务绑定 127.0.0.1，不要暴露到局域网或公网。" />
       {status.fake_mode && <Alert type="info" showIcon message="当前为 FAKE_MODE" description="普通生成使用本地模拟；“测试连通”仍会请求真实第三方服务。" />}
       <Tabs
@@ -334,6 +338,11 @@ export default function SettingsPage() {
             key: 'voices',
             label: '音色配置',
             children: <CustomVoiceSettings defaultModel={status.providers.tts_aliyun.model_id ?? 'qwen-audio-3.0-tts-plus'} />,
+          },
+          {
+            key: 'script',
+            label: '脚本配置',
+            children: <ScriptConfigSettings onDirtyChange={setScriptConfigDirty} />,
           },
         ]}
       />

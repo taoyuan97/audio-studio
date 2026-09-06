@@ -13,6 +13,8 @@ _SENTENCE_RE = re.compile(r"(?<=[。！？!?；;])")
 _MARKER_RE = re.compile(r"\[([^\]]*)\]")
 _PAUSE_RE = re.compile(r"^停顿\s*(\d+(?:\.\d+)?)\s*s$", re.I)
 _EMOTION_RE = re.compile(r"^情绪[:：]\s*(.+)$")
+_NATIVE_EMOTION_RE = re.compile(r"^emotion:\s*([A-Za-z][A-Za-z0-9 -]*)$", re.I)
+_VOCAL_RE = re.compile(r"^vocal:\s*([A-Za-z][A-Za-z0-9 -]*)$", re.I)
 _SPEED_RE = re.compile(r"^语速[:：]\s*(.+)$")
 
 
@@ -64,26 +66,54 @@ def validate_plan(plan: list[PlanSegment]) -> None:
 def build_plan(text: str, capabilities: TTSCapabilities, base_speed: float) -> list[PlanSegment]:
     plan: list[PlanSegment] = []
     emotion: str | None = None
+    inline_emotion: str | None = None
+    pending_vocals: list[str] = []
     speed_marker: str | None = None
 
     def push_speech(value: str) -> None:
+        nonlocal pending_vocals
         cleaned = _clean_speech_text(value)
         if not _has_speakable_text(cleaned):
             return
         speed = _speed_value(speed_marker, base_speed)
         resolved_emotion = emotion if capabilities.supports_instruction else None
-        for chunk in _split_long(cleaned):
+        chunks = _split_long(cleaned)
+        for chunk_index, chunk in enumerate(chunks):
             if not _has_speakable_text(chunk):
                 continue
+            inline_prefix = ""
+            if capabilities.supports_inline_tags:
+                if inline_emotion:
+                    inline_prefix += f"[{inline_emotion}]"
+                if chunk_index == 0 and pending_vocals:
+                    inline_prefix += "".join(f"[{tag}]" for tag in pending_vocals)
             plan.append(
-                PlanSegment(
-                    kind="speech", text=chunk, speed=speed, emotion=resolved_emotion
-                )
+                PlanSegment(kind="speech", text=f"{inline_prefix}{chunk}", speed=speed, emotion=resolved_emotion)
             )
+        pending_vocals = []
+
+    def flush_vocals_to_previous() -> None:
+        nonlocal pending_vocals
+        if not capabilities.supports_inline_tags or not pending_vocals:
+            pending_vocals = []
+            return
+        if plan and plan[-1].kind == "speech":
+            previous = plan[-1]
+            suffix = "".join(f"[{tag}]" for tag in pending_vocals)
+            plan[-1] = PlanSegment(
+                kind=previous.kind,
+                text=f"{previous.text}{suffix}",
+                seconds=previous.seconds,
+                speed=previous.speed,
+                emotion=previous.emotion,
+                enable_ssml=previous.enable_ssml,
+            )
+            pending_vocals = []
 
     def push_pause(seconds: float, *, force_silence: bool = False) -> None:
         if seconds <= 0:
             return
+        flush_vocals_to_previous()
         can_embed = (
             not force_silence
             and capabilities.supports_ssml
@@ -118,13 +148,27 @@ def build_plan(text: str, capabilities: TTSCapabilities, base_speed: float) -> l
         if marker == "呼气":
             push_pause(5.0, force_silence=True)
             continue
+        native_emotion_match = _NATIVE_EMOTION_RE.match(marker)
+        if native_emotion_match:
+            flush_vocals_to_previous()
+            inline_emotion = " ".join(native_emotion_match.group(1).lower().split())
+            emotion = None
+            continue
+        vocal_match = _VOCAL_RE.match(marker)
+        if vocal_match:
+            if capabilities.supports_inline_tags:
+                pending_vocals.append(" ".join(vocal_match.group(1).lower().split()))
+            continue
         emotion_match = _EMOTION_RE.match(marker)
         if emotion_match:
+            flush_vocals_to_previous()
             emotion = emotion_match.group(1).strip() or None
+            inline_emotion = None
             continue
         speed_match = _SPEED_RE.match(marker)
         if speed_match and speed_match.group(1).strip() in ("慢速", "正常", "快速"):
             speed_marker = speed_match.group(1).strip()
 
     push_speech(text[cursor:])
+    flush_vocals_to_previous()
     return plan

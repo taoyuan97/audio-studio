@@ -5,6 +5,8 @@ import type {
   ProbeResult,
   ProviderUpdateResponse,
   RuntimeUpdateResponse,
+  ScriptConfig,
+  ScriptTagConfig,
   SettingsProviderId,
   SettingsStatus,
   StatsResponse,
@@ -47,6 +49,19 @@ export function revealProviderCredential(
 
 export function updateRuntime(payload: { revision: number; llm_timeout_seconds?: number; minimax_timeout_seconds?: number }) {
   return apiFetch<RuntimeUpdateResponse>('/api/settings/runtime', { method: 'PATCH', body: payload })
+}
+
+export function getScriptConfig(signal?: AbortSignal) {
+  return apiFetch<ScriptConfig>('/api/settings/script-config', { signal })
+}
+
+export function updateScriptConfig(payload: {
+  revision: number
+  emotion_tags: ScriptTagConfig[]
+  vocal_tags: ScriptTagConfig[]
+  pause_presets: number[]
+}) {
+  return apiFetch<ScriptConfig>('/api/settings/script-config', { method: 'PATCH', body: payload })
 }
 
 export function probeProvider(provider: SettingsProviderId | 'ffmpeg') {

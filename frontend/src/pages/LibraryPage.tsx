@@ -4,6 +4,7 @@ import { App, Button, Card, Empty, Input, Modal, Popconfirm, Skeleton, Space, Ta
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { clearArtifacts, deleteArtifact, listArtifacts, updateArtifact } from '../api/artifacts'
+import { getScriptConfig } from '../api/settings'
 import type { Artifact } from '../api/types'
 import ArtifactDetailModal from '../features/library/ArtifactDetailModal'
 import {
@@ -43,6 +44,7 @@ export default function LibraryPage() {
     queryKey: ['artifacts', 'library'],
     queryFn: () => listArtifacts({ limit: 500 }).then((response) => response.items),
   })
+  const scriptConfigQuery = useQuery({ queryKey: ['script-config'], queryFn: ({ signal }) => getScriptConfig(signal), staleTime: 60_000 })
 
   const artifacts = useMemo(() => artifactsQuery.data ?? [], [artifactsQuery.data])
   const requestedArtifactId = searchParams.get('artifact_id')
@@ -159,7 +161,7 @@ export default function LibraryPage() {
         </div>
       )}
 
-      <ArtifactDetailModal artifact={selected} onClose={closeDetail} />
+      <ArtifactDetailModal artifact={selected} scriptConfig={scriptConfigQuery.data} onClose={closeDetail} />
       <Modal
         title="重命名产物"
         open={renaming !== null}

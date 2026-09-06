@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.3
-- 状态：设计已确认、T012 已完成并通过自动化验收
+- 版本：v2.4
+- 状态：设计已确认、T013 已完成并通过自动化验收
 - 创建日期：2026-08-26
+- 变更记录：v2.4 增加 T013 脚本标签编辑器：配置化情绪/语气词/停顿标签、显式草稿保存、全屏共享编辑状态，以及 Qwen-Audio 原生标签转换和非兼容引擎降级
 - 变更记录：v2.3 增加 T012 混音分轨倍速：人声/背景独立 `atempo`、有效时长与成品时间轴规则、单轨增益一致性和预览边界
 - 变更记录：v2.2 增加 T011 阿里云自定义音色库：SQLite 按模型持久化、设置页独立 Tab、试听验证状态、模型感知缓存与 TTS 模型快照一致性
 - 变更记录：v2.1 完成 T006/T007 状态校准；首页移除快速开始，侧边栏增加分业务线运行态徽标，设置探测补齐本机 Origin 校验，真实 Provider 联调归入 T008
@@ -18,7 +19,7 @@
 - 变更记录：v1.3 按当前代码校准 T002：SQLite 同步短连接、run handler 注册与 `RunContext`、API 实施状态；FFmpeg 启动/设置探测归 T007，混音错误映射归 T006
 - 变更记录：v1.2 API 契约与数据模型拆分为独立文档（`api-contract.md` / `data-model.md`，实现级单一事实源），本文 5.2/5.4 改为摘要概览
 - 变更记录：v1.1 吸收 meditation-guide-studio（`C:\projects\apps\meditation-guide-studio`）已验证实现——TTS 双引擎接入代码移植、情绪 instruction 映射定论、SSML break/静音切分双策略、音频落盘原子化规范、run 进度持久化、MiniMax 同步接口修正（E1）与计费安全重试（E8）、48kHz 基准（E2）、呼吸停顿 4s/5s（E4）
-- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T012`（任务拆分）
+- 关联文档：`docs/prd/prd.md`（产品需求）、`docs/tech/api-contract.md`（API 契约·实现级）、`docs/tech/data-model.md`（数据模型·完整定义）、`docs/task/T001–T013`（任务拆分）
 - 技术栈基准：`article-studio/docs/tech/tech-design.md`
 - 交互基准：`prototype/`（已验收原型，前端功能语义来源）
 
@@ -85,7 +86,7 @@
 | 数据模型（A4 修订） | conversations/messages/message_attachments/runs/artifacts + script_drafts + artifact_versions + tts_custom_voices；会话至多一个逻辑脚本产物，AI/编辑写草稿，用户手动追加版本 |
 | 存储（B1） | 本地 `data/audio/` 音频文件（StaticFiles 托管）+ SQLite 单库；放弃 OSS |
 | TTS（B2） | 统一 `TTSProvider` 接口，阿里云 DashScope + 火山引擎双适配；阿里云真实链路已验证，火山待官方鉴权说明后验证 |
-| 情绪标记（B3/E7） | 阿里云 `qwen-audio-3.0-tts-plus` 为默认模型，`[情绪:x]` → instruction 直传（已验证支持）；火山按 `TTSCapabilities` 能力声明降级为普通朗读；不引入 sambert 旧模型分支 |
+| 脚本标签（B3/E7/T013） | 保留旧 `[情绪:x]` instruction 兼容；新增内部 `[emotion:name]` / `[vocal:name]`，仅 `qwen-audio-3.0-tts-plus|flash` 转换为阿里云原生 `[name]`。其他引擎忽略富语言标签并在 TTS 页明确提示；停顿始终保留 |
 | BGM（B4/E1） | MiniMax Music **同步接口**（`music_generation`，单次调用返回 `audio_url`，长超时 10min）：调用 → SSE 等待心跳 → 即下即存；失败不自动重试，重试区分「重新下载/重新生成」（E8） |
 | 混音（B5） | 本地 FFmpeg（Windows 安装），Python 子进程封装；闪避仅模式 B（sidechaincompress），模式 A 删除 |
 | 音频预览（B6） | `<audio>` 经 artifact API 流播放（HTTP Range）；16bit WAV 原生解析，其他格式经 ffmpeg 提取 PCM → 峰值 JSON（缓存） |
@@ -99,7 +100,7 @@
 | 音频基准（E2/E3） | 全链路 48kHz 单一基准（TTS 原生输出档位，免重采样）；MP3 全线 320k（libmp3lame） |
 | 呼吸停顿（E4） | `[吸气]` 4s / `[呼气]` 5s 静音（对齐真实冥想节奏，移植 meditation-guide-studio 量级） |
 | 停顿风格档（E5） | 一期不引入 gentle/standard/deep 三档；停顿表做成后端可配置常量，二期再评估 |
-| 剧本范式（E6） | 维持 `[停顿 5s]` 文本标记体系（可编辑、用户可见），不引入 ScriptPlan 结构化 JSON 范式 |
+| 剧本范式（E6/T013） | 维持可编辑、用户可见的文本标记体系：`[停顿 5s]`、`[emotion:asmr]`、`[vocal:sighing]`；Provider 转换只发生在 TTS 计划层，不引入 ScriptPlan 结构化 JSON 范式 |
 | 工程规范（借鉴） | 音频落盘 `.part` 临时文件 + `os.replace` 原子替换 + 每步 ffprobe 复验 + 采样率/声道一致性校验；run 进度持久化（SSE 重连可恢复）；明确不借鉴 Dify/Key 入库/并发 worker/前端轮询 |
 
 ## 4. 仓库与目录结构
@@ -210,8 +211,9 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
   - 模型列表**仅返回已配置 Key 的可用项**（`FAKE_MODE` 返回全量），前端下拉只展示可用模型；发送时后端仍校验 `SCRIPT_LLM_NOT_CONFIGURED` 作兜底；`FAKE_MODE` 时返回内置示例脚本的伪流。
   - 三家实际模型 ID 分别由 `DEEPSEEK_MODEL_ID`、`DASHSCOPE_MODEL_ID`、`MOONSHOT_MODEL_ID` 提供初始值，必须非空但允许跨 provider 重复；运行时覆盖保存后重建注册表，工作台下拉立即显示新模型 ID。历史消息/产物中的旧 ID 不迁移。
 - **`app/script/prompts.py`**：冥想专用 Prompt 模板——角色设定 + 标记规范（`[停顿 Ns]`/`[情绪:x]`/`[语速:x]`/`[吸气]`/`[呼气]`）+ 结构要求（引导进入→主体→收尾）+ 时长-篇幅映射（5/10/15/20/25/30min≈1200/2200/3200/4200/5100/6000 字，含停顿折算）。
-- **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`{kind: speech|pause, text?, emotion?, speed?, seconds?}`）+ 预估时长（语速档 × 字数 + 停顿求和）。生成完成与 PATCH 编辑时均执行，随产物存储，前端直接渲染徽章与时间轴，**不在 TS 重复实现解析**。
+- **`app/script/markers.py`**：标记解析器（后端唯一事实源）——文本 → `segments[]`（`speech|pause|vocal`，含 `emotion/speed/seconds/tag` 等按类型字段）+ 预估时长（语速档 × 字数 + 停顿求和，vocal 权重为 0）。支持旧标签及语法合法的内部 `[emotion:name]` / `[vocal:name]`（无需仍存在于当前配置）；其他未知方括号标签按既有策略剔除，前端不重复实现解析。
 - **会话流**：POST messages → 同事务写用户消息与 `.md` / `.txt` 参考附件 → 组装多轮上下文 → LLM 流式 → `assistant.delta` → 完成后写 assistant message + 原子更新工作草稿 → `script.draft.updated`；只有用户手动保存才创建/更新逻辑 artifact 当前快照并追加版本。
+- **编辑状态**：人工编辑不做防抖或定时持久化；“保存草稿”显式 PATCH，“完成编辑”在 dirty 时先保存成功再退出，“放弃修改”二次确认后恢复服务端草稿。右栏与全屏弹窗复用同一份 draft/dirty/selection/error 状态，关闭全屏不结束编辑。
 - 多轮 refinement：历史消息全部入上下文（预算内截断），用户可自然语言微调。当前轮附件完整加入带不可信资料声明的 JSON 安全边界；历史正文优先占用 12000 字符预算，剩余预算按由近到远顺序加入历史附件并允许截断。
 
 ### 5.6 TTS 线设计
@@ -219,12 +221,12 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 - **`app/tts/providers.py`**：`TTSProvider` 统一接口——`synthesize(text, {voice, speed, pitch, emotion}) -> WAV bytes`；实现**移植自 meditation-guide-studio（已验证代码）**：
   - `AliyunTTSProvider`：Qwen-TTS 只读取独立的 `ALIYUN_TTS_API_KEY`，默认模型来自 `ALIYUN_TTS_MODEL_ID`，不得回退读取千问 LLM 的 `DASHSCOPE_*`；同时允许调用方显式传入模型，用于预配置音色验证和执行不可变 TTS 快照。走 `/services/audio/tts/SpeechSynthesizer`，payload 含 `sample_rate/volume/rate/pitch/instruction/enable_ssml`，Bearer 鉴权，SSE 响应流式解析（逐行 `data:` → JSON event → 拼 `output.audio.data`）。不移植 sambert 旧分支（E7）。
   - `VolcTTSProvider`：`openspeech.bytedance.com` —— HMAC 签名换 access token（带缓存与过期刷新）→ HTTP 合成（`voice_type/speed_ratio/volume_ratio`），二进制 frame 解码。
-- **`app/tts/capabilities.py`**：`TTSCapabilities` 能力声明（移植）——按 provider/model/voice 声明是否支持 instruction/SSML/pitch、SSML 最大停顿毫秒数、音色白名单；提交与合成计划构建时校验，不支持项自动降级。
+- **`app/tts/capabilities.py`**：`TTSCapabilities` 能力声明（移植）——按 provider/model/voice 声明是否支持 instruction/SSML/pitch/原生 inline tags、SSML 最大停顿毫秒数、音色白名单；提交与合成计划构建时校验，不支持项自动降级。
 - 默认 `qwen-audio-3.0-tts-plus` 真实验证能力：`supports_instruction=true`、`supports_ssml=false`、`supports_pitch=false`。向该模型发送 `enable_ssml + <break>` 会返回 `ret=416`，因此 `[停顿 Ns]` 必须切本地静音；前端音调滑块置灰。计划层仍保留未来 SSML 模型的 break 策略。
 - **标记 → 合成计划（B3 定论）**：`markers.py` 解析结果 → 合成计划，停顿**双策略**：
   - 支持_SSML 的引擎：`[停顿 Ns]` → `<break time="Nms"/>` 内嵌文本交引擎渲染（自然停顿）；超过能力声明最大停顿毫秒数 → 切为独立静音段；
   - 不支持 SSML / 超长停顿：文本切分 + 独立静音段拼接。
-  - `[吸气]` → 4s、`[呼气]` → 5s 静音（E4）；`[情绪:x]` → 阿里云 instruction 直传、火山降级为普通朗读；`[语速:x]` → 分段 rate。
+  - `[吸气]` → 4s、`[呼气]` → 5s 静音（E4）；旧 `[情绪:x]` 继续映射 instruction；`[emotion:name]` / `[vocal:name]` 仅在支持原生 inline tags 的 Qwen-Audio 模型转换为 `[name]`，其他引擎剥离；`[语速:x]` → 分段 rate。
 - **分段合成与拼接**：逐段调用 Provider 取 WAV PCM → 与静音段按序拼接 → 统一 48kHz WAV 母带 → MP3（libmp3lame 320k，E2/E3）。段内超长再按句号切分。全程逐段推 `tts.progress` 并同步写 `runs.progress_json`，可中断。
 - **音频落盘工程规范（移植）**：每段先落中间 WAV → `ffprobe` 复验采样率（48k）与声道一致性 → concat manifest 拼接 `.part` 临时文件 → `os.replace` 原子替换最终文件 → 再次 probe 复验时长；任一步失败清理临时文件，不落半成品。
 - **系统音色库（D4）**：`app/tts/voices.py` 按模型维护系统音色；现有阿里云 `longanlingxin/longanlufeng` 只属于 `qwen-audio-3.0-tts-plus`，名称按官方修正为“龙安灵心/龙安鲁风”。火山继续使用既有白名单。场景预设只推荐当前模型实际存在的系统音色。
@@ -268,10 +270,11 @@ ER 关系、DDL、四种产物类型 params_json/content_json 的完整字段定
 - `GET /api/settings/status`：返回配置 revision、各 provider 的 configured/掩码/来源及可编辑模型参数，同时返回 ffmpeg/ffprobe、FAKE_MODE 等只读环境状态；任何响应均不含完整凭据。
 - `PATCH /api/settings/providers/{provider}`：支持 `llm_deepseek|llm_qwen|llm_moonshot|tts_aliyun|tts_volc|minimax` 的凭据和模型参数更新；MiniMax 模型 ID 默认 `music-3.0`。密码字段未传表示保留，显式清除走独立 credentials 删除端点。
 - `PATCH /api/settings/runtime`：更新 `llm_timeout_seconds`、`minimax_timeout_seconds`；其他本地环境参数不开放写入。
+- `GET/PATCH /api/settings/script-config`：读取或以 revision 原子替换情绪、语气词和停顿预设。情绪/语气词分别最多 20 项，保存英文模型名、中文显示名和启用状态；停顿最多 20 个、整数 1–300 秒。响应同时返回系统默认值，设置页可显式恢复默认。
 - `DELETE /api/settings/providers/{provider}/credentials`：删除浏览器运行时凭据覆盖；若 `.env` 有值则立即回退并在 status 中显示 `source=env`。
 - `POST /api/settings/providers/{provider}/credentials/reveal`：以 revision + 单字段读取 `SettingsStore._overrides`，不读取合并后的 Settings，因而不会回退或泄露 `.env`；成功响应禁止缓存，并复用本机 Origin 校验。MiniMax 与其他单 Key provider 使用 `credential`，火山 App ID/Token 分字段请求，页面自动读取 App ID 不会同时下发 Token。
 - 前端完整凭据只保存在 ProviderCard 组件状态：默认隐藏，点击显示；保存成功与卸载时释放，不进入 React Query/Web Storage/URL。MiniMax 使用标准密码输入并可编辑模型 ID；火山 App ID 为普通输入常显，Access Token 使用独立密码输入。
-- 设置页顶层使用“模型与环境设置 / 音色配置”两个 Tab，交互参考产物库。前者承载既有 Provider、运行时和本地环境；后者管理 SQLite 自定义音色，并清楚标注模型绑定、试听费用和本地删除语义。TTS 页不提供音色 CRUD。
+- 设置页顶层使用“模型与环境设置 / 音色配置 / 脚本配置”三个 Tab。脚本配置管理可排序、启停的情绪/语气词标签和停顿预设；编辑器只允许插入这里已配置且启用的标签。
 - 写接口携带 revision 做乐观并发控制；校验并原子落盘成功后才替换内存快照。保存和真实连通测试分离，探测失败不回滚配置。
 - `POST /api/settings/probe/{provider}`：轻量真实探测——LLM（一次极短补全）、TTS（合成一句短音频即弃）、MiniMax（调用官方 `GET /v1/models`，不触发音乐生成计费）、ffmpeg（版本）。FAKE_MODE 不改变 probe 的真实探测语义。
 - 免重启生效边界：一般任务在开始执行时读取最新设置；TTS 的模型与音色在提交时冻结、执行时仅读取最新凭据，防止排队期间切换模型造成错配。LLM registry 和 BGM handler 不得永久捕获启动时配置。
@@ -344,7 +347,7 @@ LLM_TIMEOUT_SECONDS=120
 
 ### 6.3 数据层
 
-- **TanStack Query**：会话/消息/草稿/版本/产物/defaults/stats 走 Query；发送、草稿自动保存、保存版本、恢复、取消、删除走 Mutation；`run.completed` / `script.draft.updated` 精确失效收口。
+- **TanStack Query**：会话/消息/草稿/版本/产物/defaults/stats/脚本配置走 Query；发送、手动保存草稿、保存版本、恢复、取消、删除和脚本配置保存走 Mutation；`run.completed` / `script.draft.updated` 精确失效收口。
 - **Zustand**：仅运行态（activeRunId、流式临时内容、队列状态）与全局 UI 态；不缓存服务端数据副本。
 - **API 层**：`client.ts` 错误归一化 `ApiError{status, code, message}`（透出 5.2 错误码）；`types.ts` 与后端契约一一对应，手工维护（锚定契约测试）。
 
@@ -363,10 +366,11 @@ LLM_TIMEOUT_SECONDS=120
 | `js/common/mock.js` | 后端 defaults 接口（模型/引擎/音色/风格均为真实数据） |
 | `js/common/audio.js`（Web Audio 引擎） | 删除——真实音频经 `AudioPlayer`（`<audio>` + Range）与 `WaveformView`（peaks JSON） |
 | `js/pages/meditation.js` 对话区 | `features/script-workspace/`（MessageList + 流式 hook + 参数气泡） |
+| 脚本光标标签工具栏/全屏编辑 | `features/script-workspace/ScriptEditor` + `MeditationWorkspacePage` 共享编辑状态 |
 | 标记徽章/时间轴渲染 | `components/ScriptView/`（渲染后端 `segments[]`，不重复解析） |
 | `js/pages/tts.js / bgm.js / mixdown.js` | `features/tts|bgm|mixdown/`（表单 + run 进度 + 结果区） |
 | `js/pages/library.js` | `features/library/`（Tab 筛选 + 详情弹层 + 送下游） |
-| `js/pages/settings.js` | `features/settings/`（状态卡 + 探测按钮） |
+| `js/pages/settings.js` | `features/settings/`（状态卡、探测、音色与脚本配置） |
 
 交互细节保留：时长/格式气泡设置（DurationSelect/FormatSelect）、语速音调滑块联动、场景预设联动、双轨波形叠放、闪避开关与说明文案、空态引导、清空确认。
 
@@ -404,7 +408,7 @@ uv run python scripts/smoke_music.py  # MiniMax 同步调用 + 下载
 | 层级 | 工具 | 范围 |
 |---|---|---|
 | 后端单元/契约 | pytest | markers 解析、合成计划、FFmpeg 滤镜链参数、串行队列/取消、5.2 全端点契约、SSE 事件序列 |
-| 前端组件 | Vitest + Testing Library | ScriptView 徽章/时间轴、AudioPlayer、useRunStream 事件分发、表单联动 |
+| 前端组件 | Vitest + Testing Library | ScriptView 徽章/时间轴、光标标签插入与手动保存、AudioPlayer、useRunStream 事件分发、设置表单联动 |
 | E2E | Playwright | FAKE_MODE 下主路径：冥想生成→编辑→TTS→混音导出；BGM→混音（纯音乐）；产物库增删/送下游；排队/取消 |
 
 混音线 E2E 用真实 FFmpeg（本地依赖）；TTS/BGM/LLM 用假模式，不依赖真实 Key。
@@ -447,8 +451,9 @@ cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | T008 | E2E 联调与验收（FAKE_MODE 主路径 + 真实服务 smoke） | 全部 |
 | T009 | 冥想消息 Markdown/TXT 参考附件：选择校验、持久化、Prompt 与重试 | T003 |
 | T011 | 阿里云自定义音色库：按模型持久化、设置页管理、试听验证、TTS 合并选择 | T004、T007 |
+| T013 | 脚本结果编辑器：配置化情绪/语气词/停顿、手动草稿保存、全屏编辑、Qwen-Audio 标签转换与降级 | T003、T004、T007 |
 | 二期 T101+ | 播客剧本线（scene=podcast，意图识别/润色模式），复用 T004/T006 | 一期完成 |
 
 建议顺序：T001/T002 并行 → T003 → T004 → T005 → T006 → T007 → T008。B3 情绪支持度已由 meditation-guide-studio 验证，`smoke_tts.py` 仅作 T004 完工后的连通复核，不再阻塞开工。
 
-当前实施状态：T001、T002、T003、T005、T006、T007、T009、T011 已完成；T004 阿里云技术验收通过、火山延期；T008 待开始。任务状态以各 `docs/task/T*.md` 为准。
+当前实施状态：T001、T002、T003、T005、T006、T007、T009、T011、T012、T013 已完成；T004 阿里云技术验收通过、火山延期；T008 待开始。任务状态以各 `docs/task/T*.md` 为准。

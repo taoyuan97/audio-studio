@@ -2,9 +2,10 @@
 
 ## 1. 文档信息
 
-- 版本：v2.3
+- 版本：v2.4
 - 状态：已确认（决策点 F1：实现级）
 - 创建日期：2026-08-26
+- 变更记录：v2.4 增加 T013 脚本配置读写、TTS inline tags 能力字段、`vocal` segment、显式草稿保存与非兼容引擎降级语义
 - 变更记录：v2.3 扩展 T012 混音请求：人声/背景独立倍速、默认值与范围、单轨参数和有效时长规范化语义
 - 变更记录：v2.2 增加 T011 阿里云自定义音色库 CRUD、按模型合并 defaults、试听验证状态与模型感知缓存；TTS 任务冻结提交时模型快照
 - 变更记录：v2.1 校准 T006/T007 实施状态，并明确所有设置 POST/PATCH/DELETE（含 Provider probe）执行本机 Origin 校验
@@ -33,7 +34,7 @@
 | 第 7 节 | TTS | 已实现；阿里云自定义音色库已接入，火山真实联调延期 | T004/T011 |
 | 第 8 节 | BGM | 已实现；真实 MiniMax smoke 因 Key/账号权限阻塞 | T005 |
 | 第 9 节 | 混音 | 已实现（含分轨倍速与单轨参数一致性） | T006/T012 |
-| 第 10 节 | 设置状态、浏览器编辑与探测 | 已实现 | T007 |
+| 第 10 节 | 设置状态、浏览器编辑、脚本配置与探测 | 已实现 | T007/T013 |
 | 第 11 节 | 通用 run、剧本、TTS、BGM 与混音事件 | 已实现 | T002–T006 |
 | 第 12 节 | 错误码目标全集；随对应业务任务逐步实现 | 部分实现 | T002–T007 |
 
@@ -231,6 +232,7 @@
 - 请求：`{ "text": "...", "expected_revision": 2 }`
 - 响应 200：更新后的 script_draft（`origin: "manual"`，revision +1）。
 - 409：`SCRIPT_DRAFT_REVISION_CONFLICT`；404：`SCRIPT_DRAFT_NOT_FOUND`。
+- 前端只在用户点击“保存草稿”，或 dirty 状态点击“完成编辑”时调用本端点；不允许防抖、定时或输入触发的自动保存。“完成编辑”必须等待保存成功才退出编辑态。
 
 ### 4.10 POST /api/conversations/{id}/script-versions
 
@@ -391,6 +393,7 @@ SSE 事件流（协议见第 11 节）。
       "supports_instruction": true,
       "max_ssml_pause_ms": 0,
       "supports_pitch": false,
+      "supports_inline_tags": true,
       "voices": [
         { "id": "longanlingxin", "name": "龙安灵心", "tags": ["温柔", "女声"], "recommended_scene": "meditation", "source": "system", "custom_voice_id": null, "verification_status": null },
         { "id": "qwen-audio-3.0-tts-plus-myvoice-a1b2c3", "name": "温柔女声 03", "tags": ["自定义"], "recommended_scene": null, "source": "custom", "custom_voice_id": "cvoice_...", "verification_status": "verified" }
@@ -404,6 +407,7 @@ SSE 事件流（协议见第 11 节）。
       "supports_instruction": false,
       "max_ssml_pause_ms": 0,
       "supports_pitch": false,
+      "supports_inline_tags": false,
       "voices": [
         { "id": "zh_female_wanwanxiaohe_moon_bigtts", "name": "湾湾小何", "tags": ["知性", "女声"], "recommended_scene": "podcast", "source": "system", "custom_voice_id": null, "verification_status": null }
       ]
@@ -421,7 +425,7 @@ SSE 事件流（协议见第 11 节）。
 - 项目内置阿里云系统音色按模型组织；现有 `longanlingxin` / `longanlufeng` 仅属于 `qwen-audio-3.0-tts-plus`。其他模型不会错误继承这两项。
 - 自定义音色不参与场景推荐。TTS 页选中自定义音色后切换场景只更新语速，不覆盖音色。
 - 默认 `qwen-audio-3.0-tts-plus` 经真实调用确认不接受 SSML `<break>`（服务端 `ret=416`）且 pitch 未验证支持，因此 defaults 声明两者为 false；停顿切本地静音，前端音调滑块置灰。instruction 已真实验证可用。
-- 能力字段即 `TTSCapabilities`（B3 降级依据）：前端可据此展示"该引擎不支持情绪指令/音调"提示。
+- 能力字段即 `TTSCapabilities`（B3 降级依据）。`supports_inline_tags=true` 只适用于 `qwen-audio-3.0-tts-plus` / `qwen-audio-3.0-tts-flash`：计划层将 `[emotion:asmr]`、`[vocal:sighing]` 转为 Provider 文本中的 `[asmr]`、`[sighing]`。其他引擎剥离这两类内部标签但保留正文与停顿，TTS 页在提交前展示被忽略标签数量；旧 `[情绪:x]` instruction 行为继续兼容。
 
 ### 7.2 GET /api/tts/voices/{engine}/{voice}/preview
 
@@ -615,7 +619,7 @@ SSE 事件流（协议见第 11 节）。
 
 ## 10. 设置线
 
-设置页前端使用两个顶层 Tab：“模型与环境设置”承载既有 Provider/运行时/本地环境内容，“音色配置”承载第 7.3–7.8 节自定义音色管理。音色配置保存在 SQLite，不写入 `settings.json`；两个浏览器连接同一后端和同一 `DATA_DIR` 时共享数据。
+设置页前端使用三个顶层 Tab：“模型与环境设置”承载既有 Provider/运行时/本地环境内容，“音色配置”承载第 7.3–7.8 节自定义音色管理，“脚本配置”承载情绪/语气词/停顿预设。音色配置保存在 SQLite；脚本配置以完整快照写入 `settings.json`。两个浏览器连接同一后端和同一 `DATA_DIR` 时共享数据。
 
 ### 10.1 GET /api/settings/status
 
@@ -686,7 +690,47 @@ SSE 事件流（协议见第 11 节）。
 
 请求体可包含 `llm_timeout_seconds`（1–600）和 `minimax_timeout_seconds`（30–1200），并必须包含 revision。至少提供一个待修改字段；其余环境参数不可写。响应 200 返回更新后的 `runtime` 与 revision。
 
-### 10.6 POST /api/settings/probe/{provider}
+### 10.6 GET /api/settings/script-config
+
+读取当前脚本标签配置和系统默认值，响应带 `Cache-Control: no-store`：
+
+```json
+{
+  "revision": 3,
+  "emotion_tags": [{ "name": "asmr", "label": "轻柔耳语", "enabled": true }],
+  "vocal_tags": [{ "name": "sighing", "label": "叹息", "enabled": true }],
+  "pause_presets": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 60],
+  "defaults": {
+    "emotion_tags": [{ "name": "asmr", "label": "轻柔耳语", "enabled": true }],
+    "vocal_tags": [{ "name": "sighing", "label": "叹息", "enabled": true }],
+    "pause_presets": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 60]
+  }
+}
+```
+
+- `name` 是传给模型的英文值：1–64 字符，以英文字母开头，后续只允许英文字母、数字、空格和 `-`；服务端统一转小写并折叠连续空格。同一类别规范化后不得重复。
+- `label` 是 1–20 字符中文显示名，禁止方括号和控制字符；`enabled=false` 的项仍保留在配置中，但不出现在编辑器插入列表。
+- 情绪和语气词各最多 20 项；停顿最多 20 项且不得重复，每项必须为整数 1–300 秒。配置列表顺序就是编辑器展示顺序。
+- 系统默认情绪为 7 项、语气词为阿里云官方 7 项、停顿为 15 项；“恢复默认”由前端把 `defaults` 复制到编辑态，仍需用户显式保存。
+
+### 10.7 PATCH /api/settings/script-config
+
+以完整快照替换三类配置：
+
+```json
+{
+  "revision": 3,
+  "emotion_tags": [{ "name": "asmr", "label": "轻柔耳语", "enabled": true }],
+  "vocal_tags": [{ "name": "sighing", "label": "叹息", "enabled": true }],
+  "pause_presets": [1, 2, 3, 5, 10]
+}
+```
+
+- 三个集合均必传，允许空数组；校验成功后原子写入 `settings.json`，revision +1，响应 200 与 10.6 相同。
+- revision 过期返回 409 `SETTINGS_REVISION_CONFLICT`；字段、数量、名称、重复或范围非法返回 422 `SETTINGS_PARAMS_INVALID`。
+- 执行本机 Origin 校验；失败时不得修改内存配置或落盘文件。
+
+### 10.8 POST /api/settings/probe/{provider}
 
 连通性测试（真实轻量探测）。
 
@@ -790,7 +834,7 @@ SSE 事件流（协议见第 11 节）。
 | `MIX_INPUT_INVALID` | 422 | 轨道 id 不存在/类型错误 | 刷新下拉 |
 | `MIX_FFMPEG_MISSING` | 503 | ffmpeg/ffprobe 不可用 | 引导去设置页查看安装指引 |
 | `MIX_FFMPEG_ERROR` | 500 | ffmpeg 执行失败（脱敏） | 失败卡片+重试 |
-| `SETTINGS_PARAMS_INVALID` | 422 | provider、字段或参数范围非法；包含 MiniMax Key 写入尝试 | 保留表单并定位字段 |
+| `SETTINGS_PARAMS_INVALID` | 422 | provider、运行时或脚本配置的字段、数量、名称、重复项或参数范围非法 | 保留表单并定位字段 |
 | `SETTINGS_REVISION_CONFLICT` | 409 | 配置已被其他页面更新 | 刷新状态后重试 |
 | `SETTINGS_PERSIST_FAILED` | 500 | 运行时配置原子持久化失败，旧配置保持有效 | 提示检查 DATA_DIR 权限后重试 |
 | `SETTINGS_ORIGIN_FORBIDDEN` | 403 | 配置写请求不是允许的本机同源来源 | 阻止写入并提示仅限本机使用 |

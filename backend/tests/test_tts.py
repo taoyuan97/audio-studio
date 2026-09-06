@@ -61,10 +61,44 @@ def test_default_aliyun_qwen_uses_local_silence_for_pause():
     assert all(item.enable_ssml is False for item in plan)
 
 
+def test_plan_keeps_300_second_pause_as_local_silence():
+    plan = build_plan("开始[停顿 300s]结束", ALIYUN_QWEN, 0.8)
+    assert any(item.kind == "silence" and item.seconds == 300 for item in plan)
+    assert all(item.enable_ssml is False for item in plan)
+
+
 def test_plan_degrades_instruction_and_ssml_for_volcano():
     plan = build_plan("你好[情绪:温柔][停顿 2s]世界", VOLCANO, 1.0)
     assert all(item.emotion is None for item in plan)
     assert any(item.kind == "silence" and item.seconds == 2 for item in plan)
+
+
+def test_plan_converts_native_emotion_and_vocal_for_qwen_audio():
+    plan = build_plan(
+        "[emotion:asmr]第一句。[vocal:sighing]第二句。",
+        ALIYUN_QWEN,
+        1.0,
+    )
+    speeches = [item for item in plan if item.kind == "speech"]
+    assert speeches[0].text == "[asmr]第一句。"
+    assert speeches[1].text == "[asmr][sighing]第二句。"
+    assert all(item.emotion is None for item in speeches)
+
+
+def test_plan_repeats_native_emotion_after_long_text_split():
+    plan = build_plan("[emotion:whispers]" + "字" * 501, ALIYUN_QWEN, 1.0)
+    assert len(plan) == 2
+    assert all(item.text.startswith("[whispers]") for item in plan)
+
+
+def test_plan_ignores_native_tags_for_unsupported_engine_but_keeps_pause():
+    plan = build_plan(
+        "[emotion:asmr]开始[vocal:sighing][停顿 3s]继续",
+        VOLCANO,
+        1.0,
+    )
+    assert [item.text for item in plan if item.kind == "speech"] == ["开始", "继续"]
+    assert any(item.kind == "silence" and item.seconds == 3 for item in plan)
 
 
 def test_aliyun_sse_parser_joins_audio_chunks():
@@ -129,6 +163,7 @@ def test_defaults_use_independent_aliyun_model(client):
     assert aliyun["model"] == "qwen-audio-3.0-tts-plus"
     assert aliyun["supports_ssml"] is False
     assert aliyun["supports_instruction"] is True
+    assert aliyun["supports_inline_tags"] is True
     assert aliyun["supports_pitch"] is False
     assert aliyun["voices"]
     assert aliyun["voices"][0]["name"] == "龙安灵心"

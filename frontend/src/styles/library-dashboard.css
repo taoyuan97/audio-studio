@@ -280,6 +280,56 @@
   gap: 16px;
 }
 
+.settings-script-description {
+  margin-top: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.settings-script-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.settings-script-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 0.8fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-pause-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.settings-input-unit {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  color: var(--text-3);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.settings-script-actions {
+  position: sticky;
+  z-index: 2;
+  bottom: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  backdrop-filter: blur(10px);
+}
+
 .settings-voice-toolbar {
   display: flex;
   align-items: center;
@@ -337,6 +387,7 @@
   .dashboard-module-grid,
   .settings-provider-grid,
   .settings-runtime-grid,
+  .settings-script-row,
   .dashboard-stats {
     grid-template-columns: 1fr;
   }

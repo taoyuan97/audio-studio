@@ -101,6 +101,11 @@ export default function TtsPage() {
     scene, engine: engineId, voice_id: voiceId, speed,
     pitch: engine?.supports_pitch ? pitch : null, format,
   }), [artifactId, engine?.supports_pitch, engineId, format, pitch, scene, sourceMode, speed, text, voiceId])
+  const sourceText = sourceMode === 'artifact' ? selectedArtifactQuery.data?.content?.text ?? '' : text
+  const ignoredInlineTagCount = useMemo(
+    () => engine?.supports_inline_tags ? 0 : (sourceText.match(/\[(?:emotion|vocal):\s*[A-Za-z][A-Za-z0-9 -]*\]/gi) ?? []).length,
+    [engine?.supports_inline_tags, sourceText],
+  )
 
   const submitMutation = useMutation({
     mutationFn: () => submitTtsJob(requestPayload),
@@ -168,7 +173,7 @@ export default function TtsPage() {
             optionRender={(option) => { const source = option.data as ScriptSourceOption; return <div className="tts-script-option"><strong>{source.primary}</strong><span>{source.secondary} · {new Date(source.updatedAt).toLocaleString('zh-CN')}</span></div> }}
             placeholder="选择脚本产物" style={{ width: '100%' }} loading={scriptsQuery.isLoading || conversationsQuery.isLoading} /> },
           { key: 'paste', label: '粘贴文本', children: <Input.TextArea value={text} onChange={(event) => setText(event.target.value)} rows={7} maxLength={20000} showCount
-            placeholder="输入文本，可包含 [停顿 3s]、[吸气]、[呼气]、[情绪:温柔]、[语速:慢速] 等标记" /> },
+            placeholder="输入文本，可包含 [停顿 3s]、[emotion:asmr]、[vocal:sighing]、[吸气]、[呼气]、[语速:慢速] 等标记" /> },
         ]} />
         <div className="tts-field"><label>使用场景</label><Segmented block value={scene} disabled={sourceMode === 'artifact' && Boolean(artifactId)}
           options={[{ label: '冥想', value: 'meditation' }, { label: '播客', value: 'podcast' }]} onChange={(value) => chooseScene(value as Scene)} /><small>{preset?.note}</small></div>
@@ -188,6 +193,7 @@ export default function TtsPage() {
         <div className="tts-field"><label>音调 <b>{pitch === null ? '默认' : `${pitch > 0 ? '+' : ''}${pitch} 半音`}</b></label><Slider min={-12} max={12} step={1} value={pitch ?? 0}
           disabled={!engine?.supports_pitch} onChange={(value) => setPitch(value === 0 ? null : value)} />{!engine?.supports_pitch && <small>当前引擎不支持音调调节，将使用默认音调。</small>}</div>
         <div className="tts-field"><label>输出格式</label><Radio.Group value={format} onChange={(event) => setFormat(event.target.value as AudioFormat)}><Radio.Button value="mp3">MP3 · 320k</Radio.Button><Radio.Button value="wav">WAV · 48kHz/16bit</Radio.Button></Radio.Group></div>
+        {ignoredInlineTagCount > 0 && <Alert type="warning" showIcon message={`当前引擎将忽略 ${ignoredInlineTagCount} 个情绪或语气词标签`} description="正文和停顿仍会正常合成；其他引擎的标签兼容将在后续接入时评估。" />}
         <Button type="primary" block size="large" icon={<CustomerServiceOutlined />} disabled={submitDisabled || Boolean(runId)} loading={submitMutation.isPending} onClick={() => submitMutation.mutate()}>开始合成人声</Button>
       </Card>
       <Card title="合成结果" className="tts-card tts-result-card">
